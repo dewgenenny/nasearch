@@ -1,0 +1,22 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update -qq && \
+    apt-get install -y -q --no-install-recommends \
+      plocate \
+      python3 \
+      python3-pip \
+      python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+RUN pip install --quiet fastapi "uvicorn[standard]"
+
+COPY app/ /app/
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

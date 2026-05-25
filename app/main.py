@@ -1,0 +1,339 @@
+import subprocess
+import os
+import json
+import asyncio
+import base64
+import mimetypes
+import secrets
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Optional
+from urllib.parse import quote
+
+from fastapi import FastAPI, Query, BackgroundTasks, Request
+from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+
+# ── Config ────────────────────────────────────────────────────────────────────
+DB_PATH       = os.environ.get("LOCATE_DB",   "/index/files.db")
+DATA_PATH     = os.environ.get("DATA_PATH",   "/data")
+PRUNE_PATHS   = os.environ.get("PRUNE_PATHS", "/data/appdata /data/system /data/domains /data/isos")
+MAX_RESULTS   = int(os.environ.get("MAX_RESULTS", "500"))
+AUTH_USER     = os.environ.get("AUTH_USER",   "")
+AUTH_PASS     = os.environ.get("AUTH_PASS",   "")
+SETTINGS_FILE = "/index/settings.json"
+
+DEFAULT_SETTINGS = {
+    "interval_hours": 24,   # 0 = manual only
+    "last_indexed": None,
+    "last_duration_seconds": None,
+}
+
+# ── State ─────────────────────────────────────────────────────────────────────
+indexer_state = {
+    "running": False,
+    "progress": None,
+    "error": None,
+}
+_scheduler_task: Optional[asyncio.Task] = None
+
+
+# ── Auth middleware ───────────────────────────────────────────────────────────
+# Protects all routes (UI + API) when AUTH_USER and AUTH_PASS are both set.
+# When either is unset, auth is disabled so existing deployments aren't broken.
+
+def _check_basic_auth(request: Request) -> bool:
+    """Return True if the request carries valid Basic credentials."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(auth_header[6:]).decode("utf-8", errors="replace")
+        username, _, password = decoded.partition(":")
+        return (
+            secrets.compare_digest(username, AUTH_USER) and
+            secrets.compare_digest(password, AUTH_PASS)
+        )
+    except Exception:
+        return False
+
+
+# ── Settings helpers ──────────────────────────────────────────────────────────
+def load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE) as f:
+            data = json.load(f)
+            return {**DEFAULT_SETTINGS, **data}
+    except Exception:
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(s: dict):
+    Path(SETTINGS_FILE).parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(s, f, indent=2)
+
+
+# ── Indexer ───────────────────────────────────────────────────────────────────
+def run_index_sync():
+    """Runs updatedb in a thread. Safe to call from asyncio via run_in_executor."""
+    if indexer_state["running"]:
+        return False, "Indexer already running"
+
+    indexer_state["running"] = True
+    indexer_state["progress"] = "Starting updatedb…"
+    indexer_state["error"] = None
+    started = datetime.now(timezone.utc)
+
+    try:
+        cmd = [
+            "updatedb", "-l", "0",
+            "-o", DB_PATH,
+            "-U", DATA_PATH,
+            "--prunepaths", PRUNE_PATHS,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        duration = (datetime.now(timezone.utc) - started).total_seconds()
+
+        if result.returncode != 0:
+            indexer_state["error"] = result.stderr.strip() or "updatedb exited with error"
+            return False, indexer_state["error"]
+
+        settings = load_settings()
+        settings["last_indexed"] = datetime.now(timezone.utc).isoformat()
+        settings["last_duration_seconds"] = round(duration)
+        save_settings(settings)
+        indexer_state["progress"] = None
+        return True, f"Indexed in {round(duration)}s"
+
+    except subprocess.TimeoutExpired:
+        indexer_state["error"] = "Indexer timed out after 1 hour"
+        return False, indexer_state["error"]
+    except Exception as e:
+        indexer_state["error"] = str(e)
+        return False, str(e)
+    finally:
+        indexer_state["running"] = False
+        indexer_state["progress"] = None
+
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+async def scheduler_loop():
+    """Async loop that re-indexes on the configured interval."""
+    while True:
+        settings = load_settings()
+        interval_hours = settings.get("interval_hours", 24)
+
+        if interval_hours <= 0:
+            # Manual only — check again in 10 minutes in case settings change
+            await asyncio.sleep(600)
+            continue
+
+        last = settings.get("last_indexed")
+        if last:
+            last_dt = datetime.fromisoformat(last)
+            now = datetime.now(timezone.utc)
+            elapsed_hours = (now - last_dt).total_seconds() / 3600
+            wait_hours = max(0, interval_hours - elapsed_hours)
+        else:
+            wait_hours = 0  # Never indexed — do it now
+
+        if wait_hours > 0:
+            await asyncio.sleep(wait_hours * 3600)
+
+        # Re-check interval hasn't been disabled while we were sleeping
+        settings = load_settings()
+        if settings.get("interval_hours", 24) > 0:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, run_index_sync)
+
+        # After indexing, wait the full interval before next run
+        await asyncio.sleep(60)  # brief pause before re-evaluating
+
+
+# ── App lifecycle ─────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app):
+    global _scheduler_task
+    _scheduler_task = asyncio.create_task(scheduler_loop())
+    yield
+    _scheduler_task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+# ── Auth gate (middleware) ────────────────────────────────────────────────────
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not AUTH_USER or not AUTH_PASS:
+        return await call_next(request)
+    if _check_basic_auth(request):
+        return await call_next(request)
+    return Response(
+        "Authentication required",
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="NASearch"'},
+    )
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def format_size_bytes(n: int) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+def format_size(path: str) -> Optional[str]:
+    try:
+        return format_size_bytes(os.path.getsize(path))
+    except Exception:
+        return None
+
+
+def get_icon(path: str) -> str:
+    ext = Path(path).suffix.lower()
+    icons = {
+        ".stl": "🧊", ".3mf": "🧊", ".obj": "🧊",
+        ".mp4": "🎬", ".mkv": "🎬", ".avi": "🎬", ".mov": "🎬", ".webm": "🎬",
+        ".mp3": "🎵", ".flac": "🎵", ".wav": "🎵", ".ogg": "🎵", ".aac": "🎵", ".m4a": "🎵",
+        ".jpg": "🖼️", ".jpeg": "🖼️", ".png": "🖼️", ".gif": "🖼️", ".webp": "🖼️",
+        ".pdf": "📄", ".doc": "📝", ".docx": "📝", ".txt": "📝",
+        ".zip": "📦", ".tar": "📦", ".gz": "📦", ".rar": "📦", ".7z": "📦",
+        ".py": "🐍", ".js": "📜", ".ts": "📜", ".sh": "⚙️",
+        ".iso": "💿", ".img": "💿",
+        ".xlsx": "📊", ".csv": "📊",
+    }
+    return icons.get(ext, "📁" if not ext else "📄")
+
+
+def safe_resolve(path: str) -> Optional[Path]:
+    """Resolve path and ensure it falls within DATA_PATH. Returns None on violation."""
+    try:
+        full = Path(path).resolve()
+        root = Path(DATA_PATH).resolve()
+        full.relative_to(root)  # raises ValueError if outside root
+        return full
+    except (ValueError, Exception):
+        return None
+
+
+# ── API ───────────────────────────────────────────────────────────────────────
+@app.get("/api/search")
+async def search(
+    q: str = Query("", min_length=0),
+    ext: Optional[str] = Query(None),
+    limit: int = Query(200, le=MAX_RESULTS),
+):
+    if not q and not ext:
+        return JSONResponse({"results": [], "total": 0, "truncated": False})
+
+    if not Path(DB_PATH).exists():
+        return JSONResponse(
+            {"error": f"Index not found at {DB_PATH}. Trigger a re-index first."},
+            status_code=503,
+        )
+
+    pattern = q if q else f"*.{ext.lstrip('.')}"
+    cmd = ["locate", "-d", DB_PATH, "-i", "--", pattern]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"error": "Search timed out"}, status_code=504)
+    except FileNotFoundError:
+        return JSONResponse({"error": "'locate' not found in container"}, status_code=500)
+
+    lines = [l for l in result.stdout.splitlines() if l.strip()]
+
+    if ext and q:
+        ext_clean = ext.lstrip(".").lower()
+        lines = [l for l in lines if l.lower().endswith(f".{ext_clean}")]
+
+    truncated = len(lines) > limit
+    lines = lines[:limit]
+
+    results = []
+    for path in lines:
+        p = Path(path)
+        results.append({
+            "path": path,
+            "name": p.name,
+            "dir": str(p.parent),
+            "ext": p.suffix.lower().lstrip("."),
+            "icon": get_icon(path),
+            "size": format_size(path),
+        })
+
+    return JSONResponse({"results": results, "total": len(results), "truncated": truncated})
+
+
+@app.get("/api/status")
+async def status():
+    settings = load_settings()
+    db_exists = Path(DB_PATH).exists()
+    db_size = format_size(DB_PATH) if db_exists else None
+    return {
+        "db_exists": db_exists,
+        "db_size": db_size,
+        "indexer": indexer_state,
+        "last_indexed": settings.get("last_indexed"),
+        "last_duration_seconds": settings.get("last_duration_seconds"),
+        "interval_hours": settings.get("interval_hours", 24),
+    }
+
+
+@app.post("/api/reindex")
+async def reindex(background_tasks: BackgroundTasks):
+    if indexer_state["running"]:
+        return JSONResponse({"error": "Indexer already running"}, status_code=409)
+    loop = asyncio.get_event_loop()
+    background_tasks.add_task(loop.run_in_executor, None, run_index_sync)
+    return {"ok": True, "message": "Indexing started"}
+
+
+@app.post("/api/settings")
+async def update_settings(body: dict):
+    settings = load_settings()
+    if "interval_hours" in body:
+        val = int(body["interval_hours"])
+        if val not in [0, 1, 6, 12, 24, 48, 168]:
+            return JSONResponse({"error": "Invalid interval"}, status_code=400)
+        settings["interval_hours"] = val
+    save_settings(settings)
+    return {"ok": True, "settings": settings}
+
+
+@app.get("/api/file")
+async def serve_file(
+    path: str = Query(..., description="Absolute path within DATA_PATH"),
+    dl: bool = Query(False, description="Force download (attachment) vs inline preview"),
+):
+    """Serve a file from the NAS for download or inline preview.
+
+    Path is validated to be within DATA_PATH before serving.
+    Supports HTTP Range requests (required for video/audio seeking).
+    """
+    full_path = safe_resolve(path)
+    if not full_path:
+        return JSONResponse({"error": "Access denied: path outside data root"}, status_code=403)
+    if not full_path.exists() or not full_path.is_file():
+        return JSONResponse({"error": "File not found"}, status_code=404)
+
+    mime_type, _ = mimetypes.guess_type(str(full_path))
+    mime_type = mime_type or "application/octet-stream"
+
+    disposition = "attachment" if dl else "inline"
+    encoded_name = quote(full_path.name, safe="")
+    headers = {
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{encoded_name}",
+        "Cache-Control": "private, max-age=3600",
+    }
+
+    return FileResponse(str(full_path), media_type=mime_type, headers=headers)
+
+
+app.mount("/", StaticFiles(directory="/app/static", html=True), name="static")

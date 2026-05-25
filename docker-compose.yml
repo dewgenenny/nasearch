@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  nasearch:
+    build: .
+    container_name: nasearch
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - /mnt/user:/data:ro                          # your array, read-only
+      - ./index:/index    # index DB + settings.json
+    environment:
+      - LOCATE_DB=/index/files.db
+      - DATA_PATH=/data
+      - PRUNE_PATHS=/data/appdata /data/system /data/domains /data/isos
+      - MAX_RESULTS=500
+      # Optional: enable HTTP Basic Auth. Both must be set or auth is disabled.
+      # - AUTH_USER=admin
+      # - AUTH_PASS=changeme

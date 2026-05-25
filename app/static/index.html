@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NASearch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Variables ── */
+  :root {
+    --bg:           #0a0a0a;
+    --bg2:          #111111;
+    --bg3:          #181818;
+    --bg4:          #1e1e1e;
+    --border:       #252525;
+    --border-hi:    #333333;
+    --amber:        #ffb300;
+    --amber-dim:    #7a5500;
+    --amber-glow:   rgba(255,179,0,0.07);
+    --amber-glow2:  rgba(255,179,0,0.12);
+    --green:        #00e676;
+    --red:          #ff4444;
+    --blue:         #40c4ff;
+    --text:         #d8d8d8;
+    --text-dim:     #606060;
+    --text-muted:   #383838;
+    --mono:         'IBM Plex Mono', monospace;
+    --sans:         'IBM Plex Sans', sans-serif;
+    --radius:       0;   /* intentionally square — terminal aesthetic */
+  }
+
+  /* ── Reset ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  /* ── Base ── */
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.04) 2px,
+      rgba(0,0,0,0.04) 4px
+    );
+    pointer-events: none;
+    z-index: 9998;
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    background: none;
+    border: 1px solid var(--border-hi);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 6px 14px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+  .btn.active               { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+  .btn:disabled             { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg2);
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .logo { display: flex; align-items: baseline; gap: 10px; flex-shrink: 0; }
+  .logo-mark {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    color: var(--amber);
+    text-shadow: 0 0 24px rgba(255,179,0,0.25);
+  }
+  .logo-mark::before { content: '> '; color: var(--text-dim); font-weight: 300; }
+  .logo-sub {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .header-right { display: flex; align-items: center; gap: 16px; }
+
+  /* Index status pill */
+  .index-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 5px 11px;
+    background: var(--bg);
+    white-space: nowrap;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; transition: background 0.3s; }
+  .dot.ok   { background: var(--green);  box-shadow: 0 0 7px var(--green); }
+  .dot.err  { background: var(--red);    box-shadow: 0 0 7px var(--red); }
+  .dot.busy { background: var(--amber);  box-shadow: 0 0 7px var(--amber); animation: pulse 1.2s ease infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+
+  /* ── Settings panel ── */
+  #settings-panel {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.22s ease, border-color 0.22s;
+  }
+  #settings-panel.open {
+    max-height: 320px;
+    border-bottom-color: var(--border-hi);
+  }
+  .settings-inner {
+    padding: 20px 28px;
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .settings-section { display: flex; flex-direction: column; gap: 10px; }
+  .settings-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* Interval picker */
+  .interval-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .ivl-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 11px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: all 0.1s;
+  }
+  .ivl-btn:hover   { border-color: var(--amber); color: var(--amber); }
+  .ivl-btn.on      { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+
+  /* Settings info grid */
+  .settings-info { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 5px; }
+  .settings-info span { display: flex; gap: 10px; }
+  .info-k { color: var(--text-muted); min-width: 90px; }
+  .info-v { color: var(--text); }
+
+  /* Reindex section */
+  .reindex-col { display: flex; flex-direction: column; gap: 8px; }
+  #reindex-btn  { padding: 8px 20px; font-size: 12px; }
+  #reindex-msg  { font-size: 11px; color: var(--text-dim); min-height: 15px; letter-spacing: 0.3px; }
+
+  /* ── Main content ── */
+  main { flex: 1; padding: 24px 28px 0; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+  /* Search bar */
+  .search-bar {
+    display: flex;
+    gap: 0;
+    margin-bottom: 18px;
+    border: 1px solid var(--border-hi);
+    background: var(--bg2);
+    transition: border-color 0.14s, box-shadow 0.14s;
+  }
+  .search-bar:focus-within {
+    border-color: var(--amber);
+    box-shadow: 0 0 0 1px var(--amber), 0 0 24px var(--amber-glow2);
+  }
+  .prompt {
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    color: var(--amber);
+    font-size: 15px;
+    border-right: 1px solid var(--border);
+    user-select: none;
+    flex-shrink: 0;
+  }
+  #search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 15px;
+    padding: 13px 16px;
+    caret-color: var(--amber);
+    min-width: 0;
+  }
+  #search-input::placeholder { color: var(--text-muted); }
+
+  /* Extension filter */
+  .ext-filter {
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 8px;
+    border-left: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .ext-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+  #ext-input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 13px;
+    width: 58px;
+    caret-color: var(--amber);
+  }
+  #ext-input::placeholder { color: var(--text-muted); }
+
+  /* ── Toolbar ── */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    min-height: 18px;
+    letter-spacing: 0.5px;
+  }
+  .result-count span { color: var(--amber); }
+  .truncated-warn { color: var(--amber-dim); }
+  .spinner {
+    width: 12px; height: 12px;
+    border: 2px solid var(--border-hi);
+    border-top-color: var(--amber);
+    border-radius: 50%;
+    animation: spin 0.55s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Results table ── */
+  .results-table { width: 100%; border-collapse: collapse; }
+  .results-table th {
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 400;
+  }
+
+  .result-row {
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.07s;
+    animation: rowIn 0.12s ease both;
+  }
+  .result-row:hover { background: var(--bg3); }
+  /* Left-edge glow on hover — terminal cursor feel */
+  .result-row:hover .col-icon { box-shadow: inset 3px 0 0 var(--amber); }
+
+  .results-table td { padding: 9px 12px; font-size: 13px; vertical-align: middle; }
+
+  .col-icon  { width: 36px; text-align: center; font-size: 15px; transition: box-shadow 0.07s; }
+  .col-name  { font-weight: 500; color: var(--text); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-path  { color: var(--text-dim); font-size: 12px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-ext   { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; width: 60px; }
+  .col-size  { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 76px; }
+  .col-acts  { width: 110px; text-align: right; white-space: nowrap; }
+
+  /* Row action buttons (appear on hover) */
+  .act-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    cursor: pointer;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    transition: all 0.1s;
+    opacity: 0;
+  }
+  .result-row:hover .act-btn { opacity: 1; }
+  .act-btn + .act-btn { margin-left: 4px; }
+  .act-btn:hover { border-color: var(--amber); color: var(--amber); }
+  .act-btn.copied { border-color: var(--green); color: var(--green); opacity: 1; }
+  .act-dl:hover   { border-color: var(--blue); color: var(--blue); }
+
+  /* Preview-capable filename gets a subtle underline hint on row hover */
+  .result-row.previewable:hover .col-name { color: var(--amber); }
+
+  /* ── Empty / loading states ── */
+  .state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 72px 0;
+    gap: 12px;
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .state-glyph  { font-size: 36px; opacity: 0.3; font-family: var(--mono); }
+  .state-title  { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; }
+  .state-sub    { font-size: 11px; opacity: 0.55; }
+  .error-box {
+    background: rgba(255,68,68,0.05);
+    border: 1px solid rgba(255,68,68,0.2);
+    padding: 12px 16px;
+    color: var(--red);
+    font-size: 13px;
+    margin-bottom: 18px;
+  }
+
+  /* ── Preview modal ── */
+  #preview-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.88);
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    backdrop-filter: blur(3px);
+  }
+  #preview-overlay.open { display: flex; }
+
+  #preview-modal {
+    background: var(--bg);
+    border: 1px solid var(--border-hi);
+    width: 100%;
+    max-width: 1080px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow:
+      0 0 0 1px rgba(255,179,0,0.04),
+      0 24px 80px rgba(0,0,0,0.9),
+      0  0  60px rgba(0,0,0,0.6);
+    animation: modalIn 0.15s ease;
+    overflow: hidden;
+  }
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.98) translateY(6px); }
+    to   { opacity: 1; transform: scale(1)    translateY(0); }
+  }
+
+  #preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  #preview-crumb {
+    font-size: 11px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+  #preview-crumb .crumb-path { color: var(--text-muted); }
+  #preview-crumb .crumb-name { color: var(--amber); }
+
+  .preview-hbtns { display: flex; gap: 6px; flex-shrink: 0; }
+  #preview-dl-btn    { }
+  #preview-close-btn { }
+
+  #preview-body {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ── Preview content types ── */
+  /* Image */
+  .preview-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    margin: auto;
+    padding: 20px;
+  }
+
+  /* Video */
+  .preview-video {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    background: #000;
+    outline: none;
+  }
+
+  /* Audio */
+  .preview-audio-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    padding: 40px 20px;
+    text-align: center;
+  }
+  .preview-audio-icon { font-size: 52px; opacity: 0.6; }
+  .preview-audio-name { font-size: 15px; font-weight: 500; color: var(--amber); max-width: 500px; word-break: break-all; }
+  .preview-audio-meta { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+  .preview-audio-wrap audio { width: min(480px, 90%); outline: none; }
+
+  /* PDF */
+  #preview-body.pdf-mode {
+    padding: 0;
+    display: block;
+    overflow: hidden;
+  }
+  .preview-pdf { width: 100%; height: 100%; border: none; display: block; }
+
+  /* Text / code */
+  #preview-body.text-mode {
+    display: block;
+    overflow: hidden;
+    padding: 0;
+    align-items: unset;
+    justify-content: unset;
+  }
+  .preview-code-wrap {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .preview-code-trunc {
+    flex-shrink: 0;
+    padding: 6px 18px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--amber-dim);
+    letter-spacing: 0.5px;
+  }
+  .preview-code {
+    flex: 1;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: #c0c0c0;
+    background: #060606;
+    padding: 18px 22px;
+    margin: 0;
+    white-space: pre;
+    tab-size: 4;
+  }
+
+  /* No-preview / info panel */
+  .preview-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 48px 20px;
+    text-align: center;
+    max-width: 480px;
+  }
+  .preview-info-icon { font-size: 52px; opacity: 0.5; }
+  .preview-info-name { font-size: 14px; font-weight: 500; color: var(--text); word-break: break-all; }
+  .preview-info-path { font-size: 11px; color: var(--text-dim); word-break: break-all; }
+  .preview-info-meta { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
+  .preview-no-prev   { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; }
+  .preview-info .btn { margin-top: 4px; padding: 8px 20px; font-size: 12px; }
+
+  /* Preview loading / error */
+  .preview-loading, .preview-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 60px 20px;
+    color: var(--text-muted);
+    font-size: 12px;
+    letter-spacing: 0.5px;
+  }
+  .preview-error { color: var(--red); }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 9px 28px;
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 20px;
+    background: var(--bg2);
+    margin-top: 20px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  kbd {
+    background: var(--bg3);
+    border: 1px solid var(--border-hi);
+    padding: 1px 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  mark { background: rgba(255,179,0,0.15); color: var(--amber); padding: 0 1px; }
+
+  /* ── Row animations ── */
+  @keyframes rowIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .result-row:nth-child(1)   { animation-delay: 0.00s }
+  .result-row:nth-child(2)   { animation-delay: 0.02s }
+  .result-row:nth-child(3)   { animation-delay: 0.04s }
+  .result-row:nth-child(4)   { animation-delay: 0.06s }
+  .result-row:nth-child(5)   { animation-delay: 0.08s }
+  .result-row:nth-child(n+6) { animation-delay: 0.10s }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════ Header ════════════════════════════════ -->
+<header>
+  <div class="logo">
+    <span class="logo-mark">nasearch</span>
+    <span class="logo-sub">file index</span>
+  </div>
+  <div class="header-right">
+    <div class="index-status">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">checking…</span>
+    </div>
+    <button class="btn" id="settings-toggle">⚙ settings</button>
+  </div>
+</header>
+
+<!-- ══════════════════════════ Settings panel ══════════════════════════════ -->
+<div id="settings-panel">
+  <div class="settings-inner">
+
+    <div class="settings-section">
+      <div class="settings-label">Re-index interval</div>
+      <div class="interval-row">
+        <button class="ivl-btn" data-hours="0">Manual</button>
+        <button class="ivl-btn" data-hours="1">1h</button>
+        <button class="ivl-btn" data-hours="6">6h</button>
+        <button class="ivl-btn" data-hours="12">12h</button>
+        <button class="ivl-btn" data-hours="24">24h</button>
+        <button class="ivl-btn" data-hours="48">48h</button>
+        <button class="ivl-btn" data-hours="168">Weekly</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Index info</div>
+      <div class="settings-info">
+        <span><span class="info-k">Last indexed</span><span class="info-v" id="info-last">—</span></span>
+        <span><span class="info-k">Duration</span><span class="info-v" id="info-duration">—</span></span>
+        <span><span class="info-k">DB size</span><span class="info-v" id="info-dbsize">—</span></span>
+        <span><span class="info-k">Next run</span><span class="info-v" id="info-next">—</span></span>
+      </div>
+    </div>
+
+    <div class="settings-section reindex-col">
+      <div class="settings-label">Manual re-index</div>
+      <button class="btn" id="reindex-btn">⟳ Re-index now</button>
+      <div id="reindex-msg"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ Main ═══════════════════════════════════ -->
+<main>
+  <div id="error-box" class="error-box" style="display:none"></div>
+
+  <div class="search-bar">
+    <div class="prompt">$</div>
+    <input
+      type="text"
+      id="search-input"
+      placeholder="search filenames and paths…"
+      autocomplete="off"
+      spellcheck="false"
+      autofocus
+    >
+    <div class="ext-filter">
+      <span class="ext-label">ext</span>
+      <input
+        type="text"
+        id="ext-input"
+        placeholder="stl"
+        autocomplete="off"
+        spellcheck="false"
+        maxlength="12"
+      >
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="result-count" id="result-count"></div>
+    <div id="truncated-warn" class="truncated-warn" style="display:none">
+      ⚠ showing first 200 — refine your query
+    </div>
+    <div id="loading" style="display:none"><span class="spinner"></span></div>
+  </div>
+
+  <div id="results-container"></div>
+</main>
+
+<!-- ══════════════════════════════ Footer ══════════════════════════════════ -->
+<footer>
+  <span><kbd>/</kbd> focus</span>
+  <span><kbd>Esc</kbd> clear / close preview</span>
+  <span><kbd>click row</kbd> preview</span>
+  <span><kbd>↓</kbd> download</span>
+  <span><kbd>COPY</kbd> copy path</span>
+</footer>
+
+<!-- ══════════════════════════ Preview modal ═══════════════════════════════ -->
+<div id="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="preview-crumb">
+  <div id="preview-modal">
+    <div id="preview-header">
+      <span id="preview-crumb"></span>
+      <div class="preview-hbtns">
+        <button class="btn" id="preview-dl-btn">↓ download</button>
+        <button class="btn" id="preview-close-btn">✕ esc</button>
+      </div>
+    </div>
+    <div id="preview-body"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ Script ═════════════════════════════════ -->
+<script>
+'use strict';
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const searchInput    = document.getElementById('search-input');
+const extInput       = document.getElementById('ext-input');
+const container      = document.getElementById('results-container');
+const countEl        = document.getElementById('result-count');
+const loadingEl      = document.getElementById('loading');
+const truncWarn      = document.getElementById('truncated-warn');
+const errorBox       = document.getElementById('error-box');
+const statusDot      = document.getElementById('status-dot');
+const statusText     = document.getElementById('status-text');
+const settingsToggle = document.getElementById('settings-toggle');
+const settingsPanel  = document.getElementById('settings-panel');
+const reindexBtn     = document.getElementById('reindex-btn');
+const reindexMsg     = document.getElementById('reindex-msg');
+const infoLast       = document.getElementById('info-last');
+const infoDuration   = document.getElementById('info-duration');
+const infoDbSize     = document.getElementById('info-dbsize');
+const infoNext       = document.getElementById('info-next');
+const previewOverlay = document.getElementById('preview-overlay');
+const previewModal   = document.getElementById('preview-modal');
+const previewCrumb   = document.getElementById('preview-crumb');
+const previewBody    = document.getElementById('preview-body');
+const previewDlBtn   = document.getElementById('preview-dl-btn');
+const previewCloseBtn= document.getElementById('preview-close-btn');
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let debounceTimer       = null;
+let currentIntervalHours = 24;
+let previewCurrentPath  = null;
+let previewReturnFocus  = null;
+
+// ── File type classification ──────────────────────────────────────────────────
+const EXT = {
+  image: new Set(['jpg','jpeg','png','gif','webp','bmp','ico','avif','svg']),
+  video: new Set(['mp4','mkv','avi','mov','webm','m4v','ogv','flv']),
+  audio: new Set(['mp3','flac','wav','ogg','aac','m4a','opus','wma','ape']),
+  pdf:   new Set(['pdf']),
+  text:  new Set([
+    'txt','md','markdown','rst','log','env','gitignore','dockerignore',
+    'py','pyi','rb','go','rs','java','kt','swift','dart','c','cpp','cc','h','hpp',
+    'js','mjs','cjs','ts','tsx','jsx','vue','svelte',
+    'sh','bash','zsh','fish','ps1','bat',
+    'json','json5','yaml','yml','toml','ini','cfg','conf','properties',
+    'css','scss','sass','less','html','htm','xml','svg',
+    'sql','graphql','gql',
+    'lua','r','scala','ex','exs','clj','php','pl','hs',
+    'makefile','cmake','dockerfile','terraform','tf',
+    'vim','editorconfig','babelrc','eslintrc','prettierrc',
+  ]),
+};
+
+function previewType(ext) {
+  const e = (ext || '').toLowerCase();
+  for (const [type, set] of Object.entries(EXT)) {
+    if (set.has(e)) return type;
+  }
+  return null;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function highlight(text, query) {
+  if (!query) return escHtml(text);
+  const esc = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return escHtml(text).replace(new RegExp(esc, 'gi'), m => `<mark>${m}</mark>`);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function fmtDuration(s) {
+  if (!s) return '—';
+  return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+}
+
+function fmtNext(lastIso, hours) {
+  if (!hours) return 'manual only';
+  if (!lastIso) return 'next scheduler tick';
+  const diff = new Date(lastIso).getTime() + hours * 3_600_000 - Date.now();
+  if (diff <= 0) return 'soon';
+  const h = Math.floor(diff / 3_600_000);
+  const m = Math.floor((diff % 3_600_000) / 60_000);
+  return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+
+function fileUrl(path, download = false) {
+  return `/api/file?path=${encodeURIComponent(path)}${download ? '&dl=1' : ''}`;
+}
+
+// ── Download ──────────────────────────────────────────────────────────────────
+function downloadFile(path) {
+  const a = document.createElement('a');
+  a.href = fileUrl(path, true);
+  a.download = '';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// ── Settings panel ────────────────────────────────────────────────────────────
+settingsToggle.addEventListener('click', () => {
+  const open = settingsPanel.classList.toggle('open');
+  settingsToggle.classList.toggle('active', open);
+});
+
+document.querySelectorAll('.ivl-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const hours = parseInt(btn.dataset.hours, 10);
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interval_hours: hours }),
+    });
+    currentIntervalHours = hours;
+    setIntervalActive(hours);
+    await refreshStatus();
+  });
+});
+
+function setIntervalActive(hours) {
+  document.querySelectorAll('.ivl-btn').forEach(b => {
+    b.classList.toggle('on', parseInt(b.dataset.hours, 10) === hours);
+  });
+}
+
+// ── Re-index ──────────────────────────────────────────────────────────────────
+reindexBtn.addEventListener('click', async () => {
+  if (reindexBtn.disabled) return;
+  reindexBtn.disabled = true;
+  reindexMsg.textContent = 'Starting…';
+  try {
+    const res  = await fetch('/api/reindex', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) {
+      reindexMsg.textContent = '✗ ' + data.error;
+      reindexBtn.disabled = false;
+    } else {
+      reindexMsg.textContent = 'Running — this may take a while';
+      pollIndexer();
+    }
+  } catch (e) {
+    reindexMsg.textContent = '✗ ' + e.message;
+    reindexBtn.disabled = false;
+  }
+});
+
+function pollIndexer() {
+  const poll = setInterval(async () => {
+    const s = await fetchStatus();
+    if (!s) return;
+    if (s.indexer.running) {
+      reindexMsg.textContent = '⟳ ' + (s.indexer.progress || 'Indexing…');
+    } else {
+      clearInterval(poll);
+      reindexBtn.disabled = false;
+      if (s.indexer.error) {
+        reindexMsg.textContent = '✗ ' + s.indexer.error;
+      } else {
+        reindexMsg.textContent = `✓ Done in ${fmtDuration(s.last_duration_seconds)}`;
+        setTimeout(() => { reindexMsg.textContent = ''; }, 5000);
+      }
+      updateStatusUI(s);
+    }
+  }, 2000);
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    return await (await fetch('/api/status')).json();
+  } catch { return null; }
+}
+
+function updateStatusUI(s) {
+  if (!s) {
+    statusDot.className = 'dot err';
+    statusText.textContent = 'unreachable';
+    return;
+  }
+  if (s.indexer.running) {
+    statusDot.className = 'dot busy';
+    statusText.textContent = 'indexing…';
+  } else if (s.db_exists) {
+    statusDot.className = 'dot ok';
+    statusText.textContent = `ready · ${s.db_size || ''}`;
+  } else {
+    statusDot.className = 'dot err';
+    statusText.textContent = 'no index';
+  }
+  infoLast.textContent     = fmtDate(s.last_indexed);
+  infoDuration.textContent = fmtDuration(s.last_duration_seconds);
+  infoDbSize.textContent   = s.db_size || '—';
+  infoNext.textContent     = fmtNext(s.last_indexed, s.interval_hours);
+  currentIntervalHours     = s.interval_hours;
+  setIntervalActive(s.interval_hours);
+}
+
+async function refreshStatus() {
+  updateStatusUI(await fetchStatus());
+}
+
+refreshStatus();
+setInterval(refreshStatus, 10_000);
+
+// ── Search ────────────────────────────────────────────────────────────────────
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.style.display = 'block';
+}
+
+function renderResults(data, query) {
+  errorBox.style.display = 'none';
+  if (data.error) {
+    showError(data.error);
+    container.innerHTML = '';
+    countEl.innerHTML = '';
+    return;
+  }
+
+  const { results, total, truncated } = data;
+  truncWarn.style.display = truncated ? 'block' : 'none';
+
+  if (!results.length) {
+    countEl.innerHTML = '';
+    container.innerHTML = `
+      <div class="state">
+        <div class="state-glyph">∅</div>
+        <div class="state-title">no results</div>
+        <div class="state-sub">try a different query or extension filter</div>
+      </div>`;
+    return;
+  }
+
+  countEl.innerHTML = `<span>${total.toLocaleString()}</span> result${total !== 1 ? 's' : ''}`;
+
+  const rows = results.map(r => {
+    const ptype  = previewType(r.ext);
+    const rowCls = ptype ? 'result-row previewable' : 'result-row';
+    return `
+    <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}">
+      <td class="col-icon">${r.icon}</td>
+      <td class="col-name">${highlight(r.name, query)}</td>
+      <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
+      <td class="col-ext">${escHtml(r.ext || '—')}</td>
+      <td class="col-size">${escHtml(r.size || '—')}</td>
+      <td class="col-acts">
+        <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="Download">↓</button>
+        <button class="act-btn act-copy" data-path="${escHtml(r.path)}" title="Copy path">copy</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>name</th>
+          <th>path</th>
+          <th>type</th>
+          <th style="text-align:right">size</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  // Wire up action buttons — stopPropagation so row click doesn't also fire
+  container.querySelectorAll('.act-dl').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      downloadFile(btn.dataset.path);
+    });
+  });
+
+  container.querySelectorAll('.act-copy').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(btn.dataset.path).then(() => {
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'copy';
+          btn.classList.remove('copied');
+        }, 1500);
+      });
+    });
+  });
+
+  // Row click → preview
+  container.querySelectorAll('.result-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const result = {
+        path: row.dataset.path,
+        ext:  row.dataset.ext,
+        icon: row.dataset.icon,
+        size: row.dataset.size,
+        name: row.querySelector('.col-name').textContent,
+        dir:  row.querySelector('.col-path span').title,
+      };
+      openPreview(result, row);
+    });
+  });
+}
+
+async function doSearch() {
+  const q   = searchInput.value.trim();
+  const ext = extInput.value.trim();
+
+  if (!q && !ext) {
+    container.innerHTML = `
+      <div class="state">
+        <div class="state-glyph">_</div>
+        <div class="state-title">start typing to search</div>
+        <div class="state-sub">searches filenames and paths across the whole array</div>
+      </div>`;
+    countEl.innerHTML = '';
+    truncWarn.style.display = 'none';
+    return;
+  }
+
+  loadingEl.style.display = 'block';
+  try {
+    const params = new URLSearchParams();
+    if (q)   params.set('q', q);
+    if (ext) params.set('ext', ext);
+    const data = await (await fetch(`/api/search?${params}`)).json();
+    renderResults(data, q);
+  } catch (err) {
+    showError('Search failed: ' + err.message);
+  } finally {
+    loadingEl.style.display = 'none';
+  }
+}
+
+function scheduleSearch() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(doSearch, 250);
+}
+
+searchInput.addEventListener('input', scheduleSearch);
+extInput.addEventListener('input', scheduleSearch);
+
+// ── Preview modal ─────────────────────────────────────────────────────────────
+function openPreview(result, sourceEl) {
+  previewReturnFocus = sourceEl || document.activeElement;
+  previewCurrentPath = result.path;
+
+  // Header: crumb path
+  const dir = result.path.replace(/\/[^/]+$/, '');
+  previewCrumb.innerHTML =
+    `<span class="crumb-path">${escHtml(dir)}/</span>` +
+    `<span class="crumb-name">${escHtml(result.name || result.path.split('/').pop())}</span>`;
+
+  // Download button
+  previewDlBtn.onclick = () => downloadFile(result.path);
+
+  // Render body
+  previewBody.className = '';
+  previewBody.innerHTML = `<div class="preview-loading"><span class="spinner"></span></div>`;
+  previewOverlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  previewCloseBtn.focus();
+
+  const ptype = previewType(result.ext);
+
+  setTimeout(async () => {
+    switch (ptype) {
+      case 'image': renderImage(result); break;
+      case 'video': renderVideo(result); break;
+      case 'audio': renderAudio(result); break;
+      case 'pdf':   renderPdf(result);   break;
+      case 'text':  await renderText(result); break;
+      default:      renderInfo(result);  break;
+    }
+  }, 0);
+}
+
+function closePreview() {
+  previewOverlay.classList.remove('open');
+  document.body.style.overflow = '';
+
+  // Stop any playing media
+  previewBody.querySelectorAll('video, audio').forEach(m => {
+    m.pause();
+    m.src = '';
+  });
+  previewBody.innerHTML = '';
+  previewCurrentPath = null;
+
+  if (previewReturnFocus && typeof previewReturnFocus.focus === 'function') {
+    previewReturnFocus.focus();
+    previewReturnFocus = null;
+  }
+}
+
+previewCloseBtn.addEventListener('click', closePreview);
+previewOverlay.addEventListener('click', e => {
+  if (e.target === previewOverlay) closePreview();
+});
+
+// ── Preview renderers ─────────────────────────────────────────────────────────
+function renderImage(result) {
+  previewBody.innerHTML = '';
+  const img = document.createElement('img');
+  img.className = 'preview-img';
+  img.alt = result.name;
+  img.onerror = () => {
+    previewBody.innerHTML = `<div class="preview-error">failed to load image</div>`;
+  };
+  img.src = fileUrl(result.path);
+  previewBody.appendChild(img);
+}
+
+function renderVideo(result) {
+  previewBody.innerHTML = '';
+  const video = document.createElement('video');
+  video.className = 'preview-video';
+  video.controls = true;
+  video.autoplay = false;
+  video.style.maxWidth  = '100%';
+  video.style.maxHeight = '100%';
+  video.onerror = () => {
+    previewBody.innerHTML = `
+      <div class="preview-error">
+        browser cannot play this video format<br>
+        <button class="btn" style="margin-top:14px" onclick="downloadFile(${JSON.stringify(result.path)})">↓ download instead</button>
+      </div>`;
+  };
+  video.src = fileUrl(result.path);
+  previewBody.appendChild(video);
+}
+
+function renderAudio(result) {
+  const ext = (result.ext || '').toUpperCase();
+  previewBody.innerHTML = `
+    <div class="preview-audio-wrap">
+      <div class="preview-audio-icon">${result.icon}</div>
+      <div class="preview-audio-name">${escHtml(result.name)}</div>
+      <div class="preview-audio-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>
+      <audio controls autoplay src="${escHtml(fileUrl(result.path))}"></audio>
+    </div>`;
+}
+
+function renderPdf(result) {
+  previewBody.classList.add('pdf-mode');
+  previewBody.innerHTML = `
+    <embed
+      class="preview-pdf"
+      src="${escHtml(fileUrl(result.path))}"
+      type="application/pdf"
+    >`;
+}
+
+async function renderText(result) {
+  const MAX = 100 * 1024; // 100 KB
+  let text = '';
+  let truncated = false;
+
+  try {
+    const res = await fetch(fileUrl(result.path));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader  = res.body.getReader();
+    const chunks  = [];
+    let total     = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (total + value.length >= MAX) {
+        chunks.push(value.slice(0, MAX - total));
+        total = MAX;
+        truncated = true;
+        reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(value);
+      total += value.length;
+    }
+
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    text = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+
+  } catch (e) {
+    previewBody.innerHTML = `<div class="preview-error">failed to load file: ${escHtml(e.message)}</div>`;
+    return;
+  }
+
+  previewBody.classList.add('text-mode');
+  const truncBanner = truncated
+    ? `<div class="preview-code-trunc">⚠ showing first 100 KB — <button class="btn" style="padding:2px 8px;font-size:10px" onclick="downloadFile(${JSON.stringify(result.path)})">↓ download full file</button></div>`
+    : '';
+
+  previewBody.innerHTML = `
+    <div class="preview-code-wrap">
+      ${truncBanner}
+      <pre class="preview-code">${escHtml(text)}</pre>
+    </div>`;
+}
+
+function renderInfo(result) {
+  const ext = (result.ext || '').toUpperCase();
+  previewBody.innerHTML = `
+    <div class="preview-info">
+      <div class="preview-info-icon">${result.icon}</div>
+      <div class="preview-info-name">${escHtml(result.name)}</div>
+      <div class="preview-info-path">${escHtml(result.dir)}</div>
+      <div class="preview-info-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>
+      <div class="preview-no-prev">no preview available for this file type</div>
+      <button class="btn" onclick="downloadFile(${JSON.stringify(result.path)})">↓ download file</button>
+    </div>`;
+}
+
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  const inInput = document.activeElement === searchInput || document.activeElement === extInput;
+
+  if (e.key === 'Escape') {
+    if (previewOverlay.classList.contains('open')) {
+      closePreview();
+    } else {
+      searchInput.value = '';
+      extInput.value    = '';
+      doSearch();
+    }
+    return;
+  }
+
+  if (e.key === '/' && !inInput && !previewOverlay.classList.contains('open')) {
+    e.preventDefault();
+    searchInput.focus();
+  }
+});
+
+// Initial render
+doSearch();
+</script>
+</body>
+</html>
