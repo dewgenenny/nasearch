@@ -927,16 +927,18 @@ function showToast(msg, type = 'info') {
 let _zpSelected  = null;   // full path of currently selected folder
 let _zpCheckTmr  = null;   // debounce timer for /api/zipcheck
 
-function showZipPicker(filePath, anchorEl) {
+function showZipPicker(itemPath, anchorEl, isDir = false) {
   const picker  = document.getElementById('zip-picker');
   const crumbs  = document.getElementById('zp-crumbs');
   const confirm = document.getElementById('zp-confirm');
   const info    = document.getElementById('zp-info');
 
-  // Split full path into folder segments (all parts except the filename)
-  const parts = filePath.split('/').filter(Boolean);
-  const file  = parts[parts.length - 1];
-  const dirs  = parts.slice(0, -1);
+  const parts = itemPath.split('/').filter(Boolean);
+
+  // For directories every part is a selectable folder segment.
+  // For files the last part is the filename (shown but not selectable).
+  const file = isDir ? null : parts[parts.length - 1];
+  const dirs = isDir ? parts : parts.slice(0, -1);
 
   // Build objects with cumulative paths: [{name, path}, ...]
   const segs = dirs.map((name, i) => ({
@@ -944,7 +946,7 @@ function showZipPicker(filePath, anchorEl) {
     path: '/' + parts.slice(0, i + 1).join('/'),
   }));
 
-  // Default selection: immediate parent folder
+  // Default: innermost folder (the item itself for dirs, parent for files)
   let selIdx = segs.length - 1;
 
   function renderCrumbs() {
@@ -968,17 +970,19 @@ function showZipPicker(filePath, anchorEl) {
       });
       crumbs.appendChild(el);
     });
-    // File name — shown but not selectable
-    if (segs.length) {
-      const sep = document.createElement('span');
-      sep.className = 'zp-sep';
-      sep.textContent = ' › ';
-      crumbs.appendChild(sep);
+    // File name — shown but not selectable (omitted for directory results)
+    if (file) {
+      if (segs.length) {
+        const sep = document.createElement('span');
+        sep.className = 'zp-sep';
+        sep.textContent = ' › ';
+        crumbs.appendChild(sep);
+      }
+      const fileEl = document.createElement('span');
+      fileEl.className = 'zp-file';
+      fileEl.textContent = file;
+      crumbs.appendChild(fileEl);
     }
-    const fileEl = document.createElement('span');
-    fileEl.className = 'zp-file';
-    fileEl.textContent = file;
-    crumbs.appendChild(fileEl);
   }
 
   function runCheck(seg) {
@@ -1192,16 +1196,17 @@ function renderResults(data, query) {
   const rows = results.map(r => {
     const ptype  = previewType(r.ext);
     const rowCls = ptype ? 'result-row previewable' : 'result-row';
+    const isDir = !!r.is_dir;
     return `
-    <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-dir="${escHtml(r.dir)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}">
+    <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-dir="${escHtml(r.dir)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}" data-isdir="${isDir ? '1' : ''}">
       <td class="col-icon">${r.icon}</td>
       <td class="col-name">${highlight(r.name, query)}</td>
       <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
       <td class="col-ext">${escHtml(r.ext || '—')}</td>
       <td class="col-size">${escHtml(r.size || '—')}</td>
       <td class="col-acts">
-        <button class="act-btn act-zip"  data-dir="${escHtml(r.dir)}" title="Download parent folder as .zip">zip</button>
-        <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="Download file">↓</button>
+        <button class="act-btn act-zip"  title="${isDir ? 'Choose ancestor to zip' : 'Download parent folder as .zip'}">zip</button>
+        <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="${isDir ? 'Download folder as .zip' : 'Download file'}">↓</button>
         <button class="act-btn act-copy" data-path="${escHtml(r.path)}" title="Copy path">copy</button>
       </td>
     </tr>`;
@@ -1226,15 +1231,24 @@ function renderResults(data, query) {
   container.querySelectorAll('.act-zip').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      // Pass the full file path so the picker can build ancestor segments
-      showZipPicker(btn.closest('tr').dataset.path, btn);
+      const row   = btn.closest('tr');
+      const isDir = row.dataset.isdir === '1';
+      showZipPicker(row.dataset.path, btn, isDir);
     });
   });
 
   container.querySelectorAll('.act-dl').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      downloadFile(btn.dataset.path);
+      const row   = btn.closest('tr');
+      const isDir = row.dataset.isdir === '1';
+      if (isDir) {
+        // Directories can't be streamed as files — open the zip picker
+        // with the directory itself pre-selected
+        showZipPicker(row.dataset.path, btn, true);
+      } else {
+        downloadFile(btn.dataset.path);
+      }
     });
   });
 

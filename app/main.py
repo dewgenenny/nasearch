@@ -277,13 +277,15 @@ async def search(
     results = []
     for path in lines:
         p = Path(path)
+        is_dir = p.is_dir()
         results.append({
             "path": path,
             "name": p.name,
             "dir": str(p.parent),
-            "ext": p.suffix.lower().lstrip("."),
+            "ext": "" if is_dir else p.suffix.lower().lstrip("."),
             "icon": get_icon(path),
-            "size": format_size(path),
+            "size": None if is_dir else format_size(path),
+            "is_dir": is_dir,
         })
 
     return JSONResponse({"results": results, "total": len(results), "truncated": truncated})
