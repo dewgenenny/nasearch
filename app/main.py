@@ -1,17 +1,19 @@
 import subprocess
 import os
+import io
 import json
+import zipfile
 import asyncio
 import base64
 import mimetypes
 import secrets
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterator, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, Query, BackgroundTasks, Request
-from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
@@ -22,6 +24,8 @@ PRUNE_PATHS   = os.environ.get("PRUNE_PATHS", "/data/appdata /data/system /data/
 MAX_RESULTS   = int(os.environ.get("MAX_RESULTS", "500"))
 AUTH_USER     = os.environ.get("AUTH_USER",   "")
 AUTH_PASS     = os.environ.get("AUTH_PASS",   "")
+ZIP_MAX_FILES = int(os.environ.get("ZIP_MAX_FILES", "2000"))
+ZIP_MAX_BYTES = int(os.environ.get("ZIP_MAX_BYTES", str(2 * 1024 ** 3)))  # 2 GB
 SETTINGS_FILE = "/index/settings.json"
 
 DEFAULT_SETTINGS = {
@@ -348,6 +352,163 @@ async def serve_file(
     }
 
     return FileResponse(str(full_path), media_type=mime_type, headers=headers)
+
+
+# ── Folder zip ────────────────────────────────────────────────────────────────
+
+class _NonSeekableBuf:
+    """Write-only non-seekable sink. Forces zipfile to use data descriptors
+    (flag bit 3), so CRC/sizes are written *after* file data rather than
+    requiring seek-back — making the stream truly appendable."""
+
+    def __init__(self) -> None:
+        self._buf: bytearray = bytearray()
+        self._pos: int = 0
+
+    def write(self, data: bytes) -> int:
+        self._buf.extend(data)
+        self._pos += len(data)
+        return len(data)
+
+    def tell(self) -> int:
+        return self._pos
+
+    def seekable(self) -> bool:
+        return False
+
+    def flush(self) -> None:
+        pass
+
+    def drain(self) -> bytes:
+        out = bytes(self._buf)
+        self._buf.clear()
+        return out
+
+
+def _scan_folder(folder: Path) -> dict:
+    """Count files and bytes under folder. Returns early once limits are hit."""
+    file_count = 0
+    total_bytes = 0
+    for entry in folder.rglob("*"):
+        if not entry.is_file():
+            continue
+        file_count += 1
+        try:
+            total_bytes += entry.stat().st_size
+        except OSError:
+            pass
+        if file_count > ZIP_MAX_FILES or total_bytes > ZIP_MAX_BYTES:
+            return {
+                "ok": False,
+                "file_count": file_count,
+                "total_bytes": total_bytes,
+                "error": (
+                    f"Folder too large: {file_count}+ files / "
+                    f"~{format_size_bytes(total_bytes)} "
+                    f"(limit: {ZIP_MAX_FILES} files / {format_size_bytes(ZIP_MAX_BYTES)})"
+                ),
+            }
+    return {
+        "ok": file_count > 0,
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+        "size_label": format_size_bytes(total_bytes) if file_count else "0 B",
+        "error": "Folder is empty" if file_count == 0 else None,
+    }
+
+
+def _stream_zip(folder: Path) -> Iterator[bytes]:
+    """Sync generator yielding raw ZIP bytes.
+
+    Uses ZIP_STORED (no compression) because NAS content is typically already
+    compressed, and it avoids both CPU overhead and the need for seeking.
+    Each file is read in 256 KB chunks so memory usage stays flat.
+
+    Starlette's StreamingResponse wraps sync generators via iterate_in_threadpool,
+    so this runs in a worker thread and never blocks the event loop.
+    """
+    CHUNK = 256 * 1024
+    buf = _NonSeekableBuf()
+
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for fpath in sorted(folder.rglob("*")):
+            if not fpath.is_file():
+                continue
+            arcname = fpath.relative_to(folder).as_posix()
+            try:
+                st = fpath.stat()
+                dt = datetime.fromtimestamp(st.st_mtime)
+                info = zipfile.ZipInfo(
+                    filename=arcname,
+                    date_time=(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second),
+                )
+                info.compress_type = zipfile.ZIP_STORED
+                with zf.open(info, "w") as zentry, open(fpath, "rb") as src:
+                    while True:
+                        data = src.read(CHUNK)
+                        if not data:
+                            break
+                        zentry.write(data)
+                        chunk = buf.drain()
+                        if chunk:
+                            yield chunk
+            except (OSError, PermissionError):
+                continue  # skip files that disappear or are unreadable
+
+            # Drain data descriptor written when zentry closes
+            chunk = buf.drain()
+            if chunk:
+                yield chunk
+
+    # Central directory + end-of-central-directory record
+    final = buf.drain()
+    if final:
+        yield final
+
+
+@app.get("/api/zipcheck")
+async def zip_check(path: str = Query(...)):
+    """Return folder stats (file count, size) without downloading.
+    The UI calls this before triggering /api/zip to surface errors early."""
+    full_path = safe_resolve(path)
+    if not full_path:
+        return JSONResponse({"ok": False, "error": "Access denied"}, status_code=403)
+    if not full_path.exists() or not full_path.is_dir():
+        return JSONResponse({"ok": False, "error": "Not a directory"}, status_code=404)
+    loop = asyncio.get_event_loop()
+    info = await loop.run_in_executor(None, _scan_folder, full_path)
+    return JSONResponse(info)
+
+
+@app.get("/api/zip")
+async def zip_folder_download(path: str = Query(...)):
+    """Stream a folder as a ZIP_STORED archive.
+
+    Runs a size-gate scan first (guards against direct URL access bypassing
+    the frontend check). Then streams via a sync generator in a thread pool.
+    """
+    full_path = safe_resolve(path)
+    if not full_path:
+        return JSONResponse({"error": "Access denied"}, status_code=403)
+    if not full_path.exists() or not full_path.is_dir():
+        return JSONResponse({"error": "Not a directory"}, status_code=404)
+
+    loop = asyncio.get_event_loop()
+    info = await loop.run_in_executor(None, _scan_folder, full_path)
+    if not info["ok"]:
+        return JSONResponse({"error": info["error"]}, status_code=413)
+
+    encoded_name = quote(f"{full_path.name}.zip", safe="")
+    return StreamingResponse(
+        _stream_zip(full_path),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
+            "X-File-Count": str(info["file_count"]),
+            "X-Uncompressed-Size": str(info["total_bytes"]),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 app.mount("/", StaticFiles(directory="/app/static", html=True), name="static")

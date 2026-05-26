@@ -296,7 +296,7 @@
   .col-path  { color: var(--text-dim); font-size: 12px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .col-ext   { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; width: 60px; }
   .col-size  { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 76px; }
-  .col-acts  { width: 110px; text-align: right; white-space: nowrap; }
+  .col-acts  { width: 150px; text-align: right; white-space: nowrap; }
 
   /* Row action buttons (appear on hover) */
   .act-btn {
@@ -343,6 +343,35 @@
     font-size: 13px;
     margin-bottom: 18px;
   }
+
+  /* ── Toast notifications ── */
+  .toast {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: var(--bg3);
+    border: 1px solid var(--border-hi);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.3px;
+    padding: 10px 20px;
+    z-index: 99999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    white-space: nowrap;
+    max-width: min(520px, 90vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast.toast-error { border-color: rgba(255,68,68,0.35); color: var(--red); }
+  .toast.toast-info  { border-color: var(--amber-dim);     color: var(--amber); }
 
   /* ── Preview modal ── */
   #preview-overlay {
@@ -655,8 +684,9 @@
   <span><kbd>/</kbd> focus</span>
   <span><kbd>Esc</kbd> clear / close preview</span>
   <span><kbd>click row</kbd> preview</span>
-  <span><kbd>↓</kbd> download</span>
-  <span><kbd>COPY</kbd> copy path</span>
+  <span><kbd>↓</kbd> download file</span>
+  <span><kbd>zip</kbd> download folder</span>
+  <span><kbd>copy</kbd> copy path</span>
 </footer>
 
 <!-- ══════════════════════════ Preview modal ═══════════════════════════════ -->
@@ -787,6 +817,63 @@ function downloadFile(path) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+
+function showToast(msg, type = 'info') {
+  // Reuse existing toast element if present
+  let toast = document.querySelector('.toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    document.body.appendChild(toast);
+  }
+  clearTimeout(_toastTimer);
+  toast.className = `toast toast-${type}`;
+  toast.textContent = msg;
+  // Force reflow so the transition fires even if we're replacing a previous toast
+  toast.getBoundingClientRect();
+  toast.classList.add('show');
+  _toastTimer = setTimeout(() => {
+    toast.classList.remove('show');
+  }, 4500);
+}
+
+// ── Folder zip ────────────────────────────────────────────────────────────────
+async function triggerFolderZip(dirPath, btn) {
+  const orig = btn.textContent;
+  btn.textContent = '…';
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch(`/api/zipcheck?path=${encodeURIComponent(dirPath)}`);
+    const data = await res.json();
+
+    if (!data.ok) {
+      showToast(data.error || 'Cannot zip folder', 'error');
+      return;
+    }
+
+    // All clear — trigger a native browser download (no memory buffering)
+    const a = document.createElement('a');
+    a.href = `/api/zip?path=${encodeURIComponent(dirPath)}`;
+    a.download = '';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    showToast(
+      `Zipping ${data.file_count} file${data.file_count !== 1 ? 's' : ''} · ${data.size_label}`,
+      'info',
+    );
+  } catch (e) {
+    showToast('Zip failed: ' + e.message, 'error');
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
 }
 
 // ── Settings panel ────────────────────────────────────────────────────────────
@@ -929,14 +1016,15 @@ function renderResults(data, query) {
     const ptype  = previewType(r.ext);
     const rowCls = ptype ? 'result-row previewable' : 'result-row';
     return `
-    <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}">
+    <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-dir="${escHtml(r.dir)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}">
       <td class="col-icon">${r.icon}</td>
       <td class="col-name">${highlight(r.name, query)}</td>
       <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
       <td class="col-ext">${escHtml(r.ext || '—')}</td>
       <td class="col-size">${escHtml(r.size || '—')}</td>
       <td class="col-acts">
-        <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="Download">↓</button>
+        <button class="act-btn act-zip"  data-dir="${escHtml(r.dir)}" title="Download parent folder as .zip">zip</button>
+        <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="Download file">↓</button>
         <button class="act-btn act-copy" data-path="${escHtml(r.path)}" title="Copy path">copy</button>
       </td>
     </tr>`;
@@ -958,6 +1046,13 @@ function renderResults(data, query) {
     </table>`;
 
   // Wire up action buttons — stopPropagation so row click doesn't also fire
+  container.querySelectorAll('.act-zip').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      triggerFolderZip(btn.dataset.dir, btn);
+    });
+  });
+
   container.querySelectorAll('.act-dl').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
