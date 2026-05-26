@@ -373,6 +373,76 @@
   .toast.toast-error { border-color: rgba(255,68,68,0.35); color: var(--red); }
   .toast.toast-info  { border-color: var(--amber-dim);     color: var(--amber); }
 
+  /* ── Zip folder picker ── */
+  #zip-picker {
+    position: fixed;
+    z-index: 9999;
+    background: var(--bg2);
+    border: 1px solid var(--border-hi);
+    width: 420px;
+    max-width: calc(100vw - 16px);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,179,0,0.04);
+    display: none;
+    flex-direction: column;
+    animation: modalIn 0.12s ease;
+  }
+  #zip-picker.open { display: flex; }
+
+  .zp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 13px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .zp-head-title {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .zp-head .btn { padding: 2px 7px; font-size: 10px; }
+
+  /* Breadcrumb segment area */
+  .zp-crumbs {
+    padding: 13px 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0;
+    line-height: 2;
+    min-height: 56px;
+  }
+  .zp-seg {
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    padding: 1px 5px;
+    border: 1px solid transparent;
+    transition: color 0.08s, background 0.08s, border-color 0.08s;
+    white-space: nowrap;
+  }
+  .zp-seg:hover                { color: var(--text); border-color: var(--border-hi); }
+  .zp-seg.zp-sel               { color: var(--amber); background: var(--amber-glow); border-color: var(--amber-dim); }
+  .zp-seg.zp-after             { color: var(--text-muted); }
+  .zp-seg.zp-after:hover       { color: var(--text-dim); border-color: var(--border); }
+  .zp-sep  { color: var(--text-muted); font-size: 11px; padding: 0 1px; user-select: none; }
+  .zp-file { color: var(--text-muted); font-size: 11px; font-style: italic; padding: 1px 4px; }
+
+  /* Footer confirm bar */
+  .zp-foot {
+    padding: 9px 13px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #zp-confirm { padding: 7px 14px; font-size: 11px; flex-shrink: 0; }
+  #zp-confirm:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+  #zp-info { font-size: 11px; color: var(--text-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* ── Preview modal ── */
   #preview-overlay {
     position: fixed;
@@ -703,6 +773,19 @@
   </div>
 </div>
 
+<!-- ══════════════════════════ Zip folder picker ════════════════════════════ -->
+<div id="zip-picker">
+  <div class="zp-head">
+    <span class="zp-head-title">select folder to zip</span>
+    <button class="btn" id="zp-close-btn">✕</button>
+  </div>
+  <div class="zp-crumbs" id="zp-crumbs"></div>
+  <div class="zp-foot">
+    <button class="btn" id="zp-confirm" disabled>↓ zip</button>
+    <span id="zp-info"></span>
+  </div>
+</div>
+
 <!-- ═══════════════════════════════ Script ═════════════════════════════════ -->
 <script>
 'use strict';
@@ -840,41 +923,135 @@ function showToast(msg, type = 'info') {
   }, 4500);
 }
 
-// ── Folder zip ────────────────────────────────────────────────────────────────
-async function triggerFolderZip(dirPath, btn) {
-  const orig = btn.textContent;
-  btn.textContent = '…';
-  btn.disabled = true;
+// ── Zip folder picker ─────────────────────────────────────────────────────────
+let _zpSelected  = null;   // full path of currently selected folder
+let _zpCheckTmr  = null;   // debounce timer for /api/zipcheck
 
-  try {
-    const res  = await fetch(`/api/zipcheck?path=${encodeURIComponent(dirPath)}`);
-    const data = await res.json();
+function showZipPicker(filePath, anchorEl) {
+  const picker  = document.getElementById('zip-picker');
+  const crumbs  = document.getElementById('zp-crumbs');
+  const confirm = document.getElementById('zp-confirm');
+  const info    = document.getElementById('zp-info');
 
-    if (!data.ok) {
-      showToast(data.error || 'Cannot zip folder', 'error');
-      return;
+  // Split full path into folder segments (all parts except the filename)
+  const parts = filePath.split('/').filter(Boolean);
+  const file  = parts[parts.length - 1];
+  const dirs  = parts.slice(0, -1);
+
+  // Build objects with cumulative paths: [{name, path}, ...]
+  const segs = dirs.map((name, i) => ({
+    name,
+    path: '/' + parts.slice(0, i + 1).join('/'),
+  }));
+
+  // Default selection: immediate parent folder
+  let selIdx = segs.length - 1;
+
+  function renderCrumbs() {
+    crumbs.innerHTML = '';
+    segs.forEach((seg, i) => {
+      if (i > 0) {
+        const sep = document.createElement('span');
+        sep.className = 'zp-sep';
+        sep.textContent = ' › ';
+        crumbs.appendChild(sep);
+      }
+      const el = document.createElement('span');
+      el.className = 'zp-seg' +
+        (i === selIdx ? ' zp-sel' : i > selIdx ? ' zp-after' : '');
+      el.textContent = seg.name;
+      el.title = seg.path;
+      el.addEventListener('click', () => {
+        selIdx = i;
+        renderCrumbs();
+        runCheck(segs[i]);
+      });
+      crumbs.appendChild(el);
+    });
+    // File name — shown but not selectable
+    if (segs.length) {
+      const sep = document.createElement('span');
+      sep.className = 'zp-sep';
+      sep.textContent = ' › ';
+      crumbs.appendChild(sep);
     }
-
-    // All clear — trigger a native browser download (no memory buffering)
-    const a = document.createElement('a');
-    a.href = `/api/zip?path=${encodeURIComponent(dirPath)}`;
-    a.download = '';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    showToast(
-      `Zipping ${data.file_count} file${data.file_count !== 1 ? 's' : ''} · ${data.size_label}`,
-      'info',
-    );
-  } catch (e) {
-    showToast('Zip failed: ' + e.message, 'error');
-  } finally {
-    btn.textContent = orig;
-    btn.disabled = false;
+    const fileEl = document.createElement('span');
+    fileEl.className = 'zp-file';
+    fileEl.textContent = file;
+    crumbs.appendChild(fileEl);
   }
+
+  function runCheck(seg) {
+    _zpSelected = seg.path;
+    confirm.disabled = true;
+    confirm.textContent = `↓ zip "${seg.name}"`;
+    info.textContent = 'checking…';
+    clearTimeout(_zpCheckTmr);
+    _zpCheckTmr = setTimeout(async () => {
+      try {
+        const res  = await fetch(`/api/zipcheck?path=${encodeURIComponent(seg.path)}`);
+        const data = await res.json();
+        if (data.ok) {
+          info.textContent =
+            `${data.file_count} file${data.file_count !== 1 ? 's' : ''} · ${data.size_label}`;
+          confirm.disabled = false;
+        } else {
+          info.textContent = data.error || 'Cannot zip this folder';
+          confirm.disabled = true;
+        }
+      } catch (e) {
+        info.textContent = 'check failed';
+        confirm.disabled = true;
+      }
+    }, 200);
+  }
+
+  renderCrumbs();
+  runCheck(segs[selIdx]);
+
+  // Position: prefer above the anchor, fall back to below if not enough room
+  const rect = anchorEl.getBoundingClientRect();
+  const W    = 420;
+  picker.style.left   = Math.max(8, Math.min(rect.left, window.innerWidth - W - 8)) + 'px';
+  if (rect.top > 250) {
+    picker.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    picker.style.top    = 'auto';
+  } else {
+    picker.style.top    = (rect.bottom + 4) + 'px';
+    picker.style.bottom = 'auto';
+  }
+
+  picker.classList.add('open');
+  // Defer outside-click listener so the current click doesn't immediately close it
+  setTimeout(() => document.addEventListener('click', _zpOutsideClick), 0);
 }
+
+function closeZipPicker() {
+  document.getElementById('zip-picker').classList.remove('open');
+  document.removeEventListener('click', _zpOutsideClick);
+  clearTimeout(_zpCheckTmr);
+}
+
+function _zpOutsideClick(e) {
+  if (!document.getElementById('zip-picker').contains(e.target)) closeZipPicker();
+}
+
+// Static picker controls
+document.getElementById('zp-close-btn').addEventListener('click', closeZipPicker);
+
+document.getElementById('zp-confirm').addEventListener('click', () => {
+  if (!_zpSelected) return;
+  const name = _zpSelected.split('/').filter(Boolean).pop() || 'folder';
+  closeZipPicker();
+  const a = document.createElement('a');
+  a.href = `/api/zip?path=${encodeURIComponent(_zpSelected)}`;
+  a.download = '';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast(`Downloading ${name}.zip…`, 'info');
+});
 
 // ── Settings panel ────────────────────────────────────────────────────────────
 settingsToggle.addEventListener('click', () => {
@@ -1049,7 +1226,8 @@ function renderResults(data, query) {
   container.querySelectorAll('.act-zip').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      triggerFolderZip(btn.dataset.dir, btn);
+      // Pass the full file path so the picker can build ancestor segments
+      showZipPicker(btn.closest('tr').dataset.path, btn);
     });
   });
 
@@ -1314,7 +1492,9 @@ document.addEventListener('keydown', e => {
   const inInput = document.activeElement === searchInput || document.activeElement === extInput;
 
   if (e.key === 'Escape') {
-    if (previewOverlay.classList.contains('open')) {
+    if (document.getElementById('zip-picker').classList.contains('open')) {
+      closeZipPicker();
+    } else if (previewOverlay.classList.contains('open')) {
       closePreview();
     } else {
       searchInput.value = '';
