@@ -703,10 +703,11 @@ const previewDlBtn   = document.getElementById('preview-dl-btn');
 const previewCloseBtn= document.getElementById('preview-close-btn');
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let debounceTimer       = null;
+let debounceTimer        = null;
+let searchAbortCtrl      = null;   // cancels in-flight /api/search fetch
 let currentIntervalHours = 24;
-let previewCurrentPath  = null;
-let previewReturnFocus  = null;
+let previewCurrentPath   = null;
+let previewReturnFocus   = null;
 
 // ── File type classification ──────────────────────────────────────────────────
 const EXT = {
@@ -1010,17 +1011,25 @@ async function doSearch() {
     return;
   }
 
+  // Cancel any previous in-flight request — avoids stale results landing after
+  // a newer query and prevents piling up concurrent locate processes.
+  if (searchAbortCtrl) searchAbortCtrl.abort();
+  searchAbortCtrl = new AbortController();
+
   loadingEl.style.display = 'block';
   try {
     const params = new URLSearchParams();
     if (q)   params.set('q', q);
     if (ext) params.set('ext', ext);
-    const data = await (await fetch(`/api/search?${params}`)).json();
+    const res  = await fetch(`/api/search?${params}`, { signal: searchAbortCtrl.signal });
+    const data = await res.json();
     renderResults(data, q);
   } catch (err) {
+    if (err.name === 'AbortError') return;   // superseded by a newer query — ignore
     showError('Search failed: ' + err.message);
   } finally {
     loadingEl.style.display = 'none';
+    searchAbortCtrl = null;
   }
 }
 

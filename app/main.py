@@ -238,16 +238,30 @@ async def search(
         )
 
     pattern = q if q else f"*.{ext.lstrip('.')}"
-    cmd = ["locate", "-d", DB_PATH, "-i", "--", pattern]
 
+    # Cap locate's output at MAX_RESULTS — without -n, a short query can return
+    # hundreds of thousands of paths and buffer them all in Python memory.
+    # When q+ext are both set we need extra headroom because we post-filter.
+    fetch_n = MAX_RESULTS if (q and ext) else limit
+    cmd = ["locate", "-d", DB_PATH, "-i", "-n", str(fetch_n), "--", pattern]
+
+    # Use async subprocess so we don't block the event loop while locate runs.
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-    except subprocess.TimeoutExpired:
-        return JSONResponse({"error": "Search timed out"}, status_code=504)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return JSONResponse({"error": "Search timed out"}, status_code=504)
     except FileNotFoundError:
         return JSONResponse({"error": "'locate' not found in container"}, status_code=500)
 
-    lines = [l for l in result.stdout.splitlines() if l.strip()]
+    lines = [l for l in stdout.decode("utf-8", errors="replace").splitlines() if l.strip()]
 
     if ext and q:
         ext_clean = ext.lstrip(".").lower()
