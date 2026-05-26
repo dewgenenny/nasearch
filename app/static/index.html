@@ -1013,15 +1013,22 @@ function showZipPicker(itemPath, anchorEl, isDir = false) {
   renderCrumbs();
   runCheck(segs[selIdx]);
 
-  // Position: prefer above the anchor, fall back to below if not enough room
-  const rect = anchorEl.getBoundingClientRect();
-  const W    = 420;
-  picker.style.left   = Math.max(8, Math.min(rect.left, window.innerWidth - W - 8)) + 'px';
-  if (rect.top > 250) {
-    picker.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
-    picker.style.top    = 'auto';
+  // Position: anchored to button when available, centred on screen otherwise
+  const W = 420;
+  if (anchorEl) {
+    const rect = anchorEl.getBoundingClientRect();
+    picker.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - W - 8)) + 'px';
+    if (rect.top > 250) {
+      picker.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+      picker.style.top    = 'auto';
+    } else {
+      picker.style.top    = (rect.bottom + 4) + 'px';
+      picker.style.bottom = 'auto';
+    }
   } else {
-    picker.style.top    = (rect.bottom + 4) + 'px';
+    // Called from the preview modal — centre on screen
+    picker.style.left   = Math.max(8, Math.round((window.innerWidth  - W) / 2)) + 'px';
+    picker.style.top    = Math.max(8, Math.round((window.innerHeight - 280) / 2)) + 'px';
     picker.style.bottom = 'auto';
   }
 
@@ -1270,12 +1277,13 @@ function renderResults(data, query) {
   container.querySelectorAll('.result-row').forEach(row => {
     row.addEventListener('click', () => {
       const result = {
-        path: row.dataset.path,
-        ext:  row.dataset.ext,
-        icon: row.dataset.icon,
-        size: row.dataset.size,
-        name: row.querySelector('.col-name').textContent,
-        dir:  row.querySelector('.col-path span').title,
+        path:   row.dataset.path,
+        ext:    row.dataset.ext,
+        icon:   row.dataset.icon,
+        size:   row.dataset.size,
+        name:   row.querySelector('.col-name').textContent,
+        dir:    row.querySelector('.col-path span').title,
+        is_dir: row.dataset.isdir === '1',
       };
       openPreview(result, row);
     });
@@ -1339,8 +1347,14 @@ function openPreview(result, sourceEl) {
     `<span class="crumb-path">${escHtml(dir)}/</span>` +
     `<span class="crumb-name">${escHtml(result.name || result.path.split('/').pop())}</span>`;
 
-  // Download button
-  previewDlBtn.onclick = () => downloadFile(result.path);
+  // Download button — zip picker for directories, direct download for files
+  if (result.is_dir) {
+    previewDlBtn.textContent = '↓ zip folder';
+    previewDlBtn.onclick = () => { closePreview(); showZipPicker(result.path, null, true); };
+  } else {
+    previewDlBtn.textContent = '↓ download';
+    previewDlBtn.onclick = () => downloadFile(result.path);
+  }
 
   // Render body
   previewBody.className = '';
@@ -1494,16 +1508,32 @@ async function renderText(result) {
 
 function renderInfo(result) {
   const ext = (result.ext || '').toUpperCase();
-  previewBody.innerHTML = `
-    <div class="preview-info">
-      <div class="preview-info-icon">${result.icon}</div>
-      <div class="preview-info-name">${escHtml(result.name)}</div>
-      <div class="preview-info-path">${escHtml(result.dir)}</div>
-      <div class="preview-info-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>
-      <div class="preview-no-prev">no preview available for this file type</div>
-      <button class="btn info-dl-btn">↓ download file</button>
-    </div>`;
-  previewBody.querySelector('.info-dl-btn').addEventListener('click', () => downloadFile(result.path));
+  if (result.is_dir) {
+    previewBody.innerHTML = `
+      <div class="preview-info">
+        <div class="preview-info-icon">📁</div>
+        <div class="preview-info-name">${escHtml(result.name)}</div>
+        <div class="preview-info-path">${escHtml(result.dir)}</div>
+        <div class="preview-info-meta">directory</div>
+        <div class="preview-no-prev">choose a folder level to zip and download</div>
+        <button class="btn info-dl-btn">↓ zip &amp; download</button>
+      </div>`;
+    previewBody.querySelector('.info-dl-btn').addEventListener('click', () => {
+      closePreview();
+      showZipPicker(result.path, null, true);
+    });
+  } else {
+    previewBody.innerHTML = `
+      <div class="preview-info">
+        <div class="preview-info-icon">${result.icon}</div>
+        <div class="preview-info-name">${escHtml(result.name)}</div>
+        <div class="preview-info-path">${escHtml(result.dir)}</div>
+        <div class="preview-info-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>
+        <div class="preview-no-prev">no preview available for this file type</div>
+        <button class="btn info-dl-btn">↓ download file</button>
+      </div>`;
+    previewBody.querySelector('.info-dl-btn').addEventListener('click', () => downloadFile(result.path));
+  }
 }
 
 // ── Keyboard ──────────────────────────────────────────────────────────────────
