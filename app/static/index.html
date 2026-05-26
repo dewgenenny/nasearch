@@ -1411,8 +1411,9 @@ function renderVideo(result) {
     previewBody.innerHTML = `
       <div class="preview-error">
         browser cannot play this video format<br>
-        <button class="btn" style="margin-top:14px" onclick="downloadFile(${JSON.stringify(result.path)})">↓ download instead</button>
+        <button class="btn vid-dl-btn" style="margin-top:14px">↓ download instead</button>
       </div>`;
+    previewBody.querySelector('.vid-dl-btn').addEventListener('click', () => downloadFile(result.path));
   };
   video.src = fileUrl(result.path);
   previewBody.appendChild(video);
@@ -1478,7 +1479,7 @@ async function renderText(result) {
 
   previewBody.classList.add('text-mode');
   const truncBanner = truncated
-    ? `<div class="preview-code-trunc">⚠ showing first 100 KB — <button class="btn" style="padding:2px 8px;font-size:10px" onclick="downloadFile(${JSON.stringify(result.path)})">↓ download full file</button></div>`
+    ? `<div class="preview-code-trunc">⚠ showing first 100 KB — <button class="btn trunc-dl-btn" style="padding:2px 8px;font-size:10px">↓ download full file</button></div>`
     : '';
 
   previewBody.innerHTML = `
@@ -1486,6 +1487,9 @@ async function renderText(result) {
       ${truncBanner}
       <pre class="preview-code">${escHtml(text)}</pre>
     </div>`;
+  if (truncated) {
+    previewBody.querySelector('.trunc-dl-btn').addEventListener('click', () => downloadFile(result.path));
+  }
 }
 
 function renderInfo(result) {
@@ -1497,8 +1501,9 @@ function renderInfo(result) {
       <div class="preview-info-path">${escHtml(result.dir)}</div>
       <div class="preview-info-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>
       <div class="preview-no-prev">no preview available for this file type</div>
-      <button class="btn" onclick="downloadFile(${JSON.stringify(result.path)})">↓ download file</button>
+      <button class="btn info-dl-btn">↓ download file</button>
     </div>`;
+  previewBody.querySelector('.info-dl-btn').addEventListener('click', () => downloadFile(result.path));
 }
 
 // ── Keyboard ──────────────────────────────────────────────────────────────────
