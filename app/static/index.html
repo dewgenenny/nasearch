@@ -1206,7 +1206,7 @@ function renderResults(data, query) {
     const isDir = !!r.is_dir;
     return `
     <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-dir="${escHtml(r.dir)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}" data-isdir="${isDir ? '1' : ''}">
-      <td class="col-icon">${r.icon}</td>
+      <td class="col-icon">${escHtml(r.icon)}</td>
       <td class="col-name">${highlight(r.name, query)}</td>
       <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
       <td class="col-ext">${escHtml(r.ext || '—')}</td>
@@ -1437,7 +1437,7 @@ function renderAudio(result) {
   const ext = (result.ext || '').toUpperCase();
   previewBody.innerHTML = `
     <div class="preview-audio-wrap">
-      <div class="preview-audio-icon">${result.icon}</div>
+      <div class="preview-audio-icon">${escHtml(result.icon)}</div>
       <div class="preview-audio-name">${escHtml(result.name)}</div>
       <div class="preview-audio-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>
       <audio controls autoplay src="${escHtml(fileUrl(result.path))}"></audio>
@@ -1525,7 +1525,7 @@ function renderInfo(result) {
   } else {
     previewBody.innerHTML = `
       <div class="preview-info">
-        <div class="preview-info-icon">${result.icon}</div>
+        <div class="preview-info-icon">${escHtml(result.icon)}</div>
         <div class="preview-info-name">${escHtml(result.name)}</div>
         <div class="preview-info-path">${escHtml(result.dir)}</div>
         <div class="preview-info-meta">${escHtml(result.size || '')}${result.size && ext ? ' · ' : ''}${escHtml(ext)}</div>

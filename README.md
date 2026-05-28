@@ -18,31 +18,39 @@ mkdir -p /opt/nasearch/index
 docker compose up -d --build
 ```
 
-### 3. Build the initial index
+The container will build the initial index automatically on first start (this may take a few minutes depending on array size). Then browse to **http://bertha:8000**
 
-This will take a few minutes the first time depending on array size:
+To trigger a manual re-index at any time:
 
 ```bash
-docker compose run --rm indexer
+curl -X POST http://localhost:8000/api/reindex
 ```
-
-Then browse to **http://bertha:8000**
 
 ---
 
-## Updating the index
+## Security
 
-### Manually
+> **Auth is disabled by default.** Anyone who can reach port 8000 can search and download files from your array.
 
-```bash
-docker compose run --rm indexer
+### Enable HTTP Basic Auth
+
+Uncomment and set credentials in `docker-compose.yml`:
+
+```yaml
+environment:
+  - AUTH_USER=admin
+  - AUTH_PASS=your-strong-password-here
 ```
 
-### Via cron (Unraid User Scripts plugin, or /etc/cron.d/)
+Both must be set or auth remains disabled.
 
-```
-0 3 * * * cd /opt/nasearch && docker compose run --rm indexer >> /var/log/nasearch-index.log 2>&1
-```
+### Use HTTPS
+
+Basic auth credentials are sent Base64-encoded (effectively cleartext) in every request. **Always put NASearch behind a TLS-terminating reverse proxy before exposing it outside your local network.** On Unraid, [Nginx Proxy Manager](https://nginxproxymanager.com/) is the most common option.
+
+### Rate limiting
+
+The `/api/reindex` endpoint has no rate limiting. Anyone with access can trigger repeated re-indexing. Enable auth (above) if your instance is reachable beyond localhost.
 
 ---
 
@@ -50,19 +58,22 @@ docker compose run --rm indexer
 
 Edit `docker-compose.yml` to adjust:
 
-- `MAX_RESULTS` — cap on results returned (default 500)
-- `--prunepaths` in the indexer command — directories to skip (add appdata, domains, etc.)
-- Port mapping if 8000 is taken
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTH_USER` | _(unset)_ | Basic auth username; auth disabled if either is unset |
+| `AUTH_PASS` | _(unset)_ | Basic auth password |
+| `MAX_RESULTS` | `500` | Cap on results returned per search |
+| `PRUNE_PATHS` | See compose file | Space-separated paths to skip during indexing |
+| `ZIP_MAX_FILES` | `2000` | Max files in a folder zip download |
+| `ZIP_MAX_BYTES` | `2147483648` | Max uncompressed size of a folder zip (2 GB) |
 
 ---
 
 ## Excluding paths from the index
 
-Edit the indexer command in `docker-compose.yml`:
+Set `PRUNE_PATHS` in `docker-compose.yml` (space-separated):
 
 ```yaml
-command: >
-  bash -c "updatedb -l 0 -o /index/files.db -U /data
-    --prunepaths '/data/appdata /data/system /data/domains'
-    && echo 'Done.'"
+environment:
+  - PRUNE_PATHS=/data/appdata /data/system /data/domains /data/isos
 ```

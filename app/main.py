@@ -168,6 +168,16 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 
+# ── Security headers (middleware) ────────────────────────────────────────────
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
+
+
 # ── Auth gate (middleware) ────────────────────────────────────────────────────
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -389,10 +399,16 @@ class _NonSeekableBuf:
 
 def _scan_folder(folder: Path) -> dict:
     """Count files and bytes under folder. Returns early once limits are hit."""
+    root = Path(DATA_PATH).resolve()
     file_count = 0
     total_bytes = 0
     for entry in folder.rglob("*"):
         if not entry.is_file():
+            continue
+        # Skip symlinks that resolve outside DATA_PATH
+        try:
+            entry.resolve().relative_to(root)
+        except ValueError:
             continue
         file_count += 1
         try:
@@ -432,9 +448,15 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
     CHUNK = 256 * 1024
     buf = _NonSeekableBuf()
 
+    root = Path(DATA_PATH).resolve()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         for fpath in sorted(folder.rglob("*")):
             if not fpath.is_file():
+                continue
+            # Skip symlinks that resolve outside DATA_PATH
+            try:
+                fpath.resolve().relative_to(root)
+            except ValueError:
                 continue
             arcname = fpath.relative_to(folder).as_posix()
             try:
