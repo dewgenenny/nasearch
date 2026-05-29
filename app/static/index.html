@@ -766,6 +766,7 @@
     <div id="preview-header">
       <span id="preview-crumb"></span>
       <div class="preview-hbtns">
+        <button class="btn" id="preview-copy-btn" style="display:none">⎘ copy</button>
         <button class="btn" id="preview-dl-btn">↓ download</button>
         <button class="btn" id="preview-close-btn">✕ esc</button>
       </div>
@@ -814,6 +815,7 @@ const previewModal   = document.getElementById('preview-modal');
 const previewCrumb   = document.getElementById('preview-crumb');
 const previewBody    = document.getElementById('preview-body');
 const previewDlBtn   = document.getElementById('preview-dl-btn');
+const previewCopyBtn = document.getElementById('preview-copy-btn');
 const previewCloseBtn= document.getElementById('preview-close-btn');
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -1400,6 +1402,8 @@ function closePreview() {
     m.src = '';
   });
   previewBody.innerHTML = '';
+  previewCopyBtn.style.display = 'none';
+  previewCopyBtn.onclick = null;
   previewCurrentPath = null;
 
   if (previewReturnFocus && typeof previewReturnFocus.focus === 'function') {
@@ -1517,6 +1521,18 @@ async function renderText(result) {
   if (truncated) {
     previewBody.querySelector('.trunc-dl-btn').addEventListener('click', () => downloadFile(result.path));
   }
+
+  previewCopyBtn.style.display = '';
+  previewCopyBtn.textContent = '⎘ copy';
+  previewCopyBtn.onclick = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      previewCopyBtn.textContent = '✓ copied';
+      setTimeout(() => { previewCopyBtn.textContent = '⎘ copy'; }, 1800);
+    }).catch(() => {
+      previewCopyBtn.textContent = 'failed';
+      setTimeout(() => { previewCopyBtn.textContent = '⎘ copy'; }, 1800);
+    });
+  };
 }
 
 function renderInfo(result) {
