@@ -108,9 +108,11 @@ environment:
 
 Both must be set. Credentials are validated with a constant-time compare to resist timing attacks.
 
-### Use HTTPS
+### Use HTTPS — and think carefully before exposing it at all
 
-Basic auth credentials are Base64-encoded in every request (effectively cleartext). **Always put NASearch behind a TLS-terminating reverse proxy before exposing it outside your local network.** [Nginx Proxy Manager](https://nginxproxymanager.com/) and [Caddy](https://caddyserver.com/) are popular options.
+Basic auth credentials are Base64-encoded in every request (effectively cleartext). If you do expose NASearch outside your local network, **you must put it behind a TLS-terminating reverse proxy**. [Nginx Proxy Manager](https://nginxproxymanager.com/) and [Caddy](https://caddyserver.com/) are popular options.
+
+That said, our strong recommendation is **don't expose it to the internet at all**. NASearch is a root-running process that can read and serve every file on your array. Even with auth and TLS in place, you're one vulnerability away from exposing everything. If you need remote access, a VPN (Tailscale, WireGuard) is a much safer boundary — access your local NASearch instance over the VPN rather than punching a hole in your firewall.
 
 ### Why the container runs as root
 
