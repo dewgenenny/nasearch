@@ -1,0 +1,110 @@
+<Container version="2">
+  <Name>NASearch</Name>
+  <Repository>ghcr.io/dewgenenny/nasearch:latest</Repository>
+  <Registry>https://ghcr.io/dewgenenny/nasearch</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/dewgenenny/nasearch/main/templates/nasearch.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/dewgenenny/nasearch/main/icon.png</Icon>
+  <Overview>
+    Lightweight file search UI for your Unraid array. Uses plocate to index your files and serves a fast browser-based search interface with previews for images, video, audio, PDF, and text files. Supports inline download, folder zip, and optional HTTP Basic Auth. No Elasticsearch, no Node, no build step.
+
+    IMPORTANT: You must set either AUTH_USER + AUTH_PASS (recommended) or NOAUTH=true before the app will start.
+  </Overview>
+  <Support>https://github.com/dewgenenny/nasearch/issues</Support>
+  <Project>https://github.com/dewgenenny/nasearch</Project>
+  <ReadMe>https://raw.githubusercontent.com/dewgenenny/nasearch/main/README.md</ReadMe>
+  <Category>Tools:System</Category>
+  <Beta>false</Beta>
+  <License>MIT</License>
+
+  <!-- Port -->
+  <Config
+    Name="WebUI Port"
+    Target="8000"
+    Default="8000"
+    Mode="tcp"
+    Description="Port to access the NASearch web interface."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8000</Config>
+
+  <!-- Volumes -->
+  <Config
+    Name="Array Path"
+    Target="/data"
+    Default="/mnt/user"
+    Mode="ro"
+    Description="Root of your Unraid array, mounted read-only. NASearch will index and serve files from here."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user</Config>
+
+  <Config
+    Name="Index &amp; Config Storage"
+    Target="/index"
+    Default="/mnt/user/appdata/nasearch"
+    Mode="rw"
+    Description="Persistent storage for the plocate database and settings.json."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/nasearch</Config>
+
+  <!-- Auth — required to start -->
+  <Config
+    Name="Auth Username"
+    Target="AUTH_USER"
+    Default=""
+    Description="HTTP Basic Auth username. Set both AUTH_USER and AUTH_PASS to enable authentication (recommended)."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Auth Password"
+    Target="AUTH_PASS"
+    Default=""
+    Description="HTTP Basic Auth password. Set both AUTH_USER and AUTH_PASS to enable authentication (recommended)."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Disable Auth"
+    Target="NOAUTH"
+    Default=""
+    Description="Set to 'true' to explicitly disable authentication. Only use on a fully trusted, firewalled network. Either AUTH_USER+AUTH_PASS or NOAUTH=true must be set."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <!-- Advanced settings -->
+  <Config
+    Name="Prune Paths"
+    Target="PRUNE_PATHS"
+    Default="/data/appdata /data/system /data/domains /data/isos"
+    Description="Space-separated list of paths to skip during indexing."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">/data/appdata /data/system /data/domains /data/isos</Config>
+
+  <Config
+    Name="Max Results"
+    Target="MAX_RESULTS"
+    Default="500"
+    Description="Maximum number of search results returned per query."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">500</Config>
+
+</Container>
