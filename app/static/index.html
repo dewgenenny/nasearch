@@ -218,10 +218,10 @@
     overflow: hidden;
     transition: max-height 0.22s ease, border-color 0.22s, box-shadow 0.22s;
     position: relative;
-    z-index: 50;
+    z-index: 100;
   }
   #settings-panel.open {
-    max-height: 320px;
+    max-height: 500px;
     border-bottom-color: var(--border-hi);
     box-shadow: 0 8px 32px rgba(0,0,0,0.75);
   }
@@ -268,7 +268,7 @@
   #reindex-msg  { font-size: 11px; color: var(--text-dim); min-height: 15px; letter-spacing: 0.3px; }
 
   /* ── Main content ── */
-  main { flex: 1; padding: 24px 28px 0; max-width: 1200px; width: 100%; margin: 0 auto; }
+  main { flex: 1; padding: 24px 28px 0; max-width: 1200px; width: 100%; margin: 0 auto; position: relative; z-index: 0; }
 
   /* Search bar */
   .search-bar {
