@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NASearch</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='38' cy='38' r='28' fill='none' stroke='%23a78bfa' stroke-width='12'/%3E%3Cline x1='58' y1='58' x2='88' y2='88' stroke='%23a78bfa' stroke-width='12' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -1300,6 +1301,18 @@ async function doSearch() {
         <div class="state-glyph">_</div>
         <div class="state-title">start typing to search</div>
         <div class="state-sub">searches filenames and paths across the whole array</div>
+      </div>`;
+    countEl.innerHTML = '';
+    truncWarn.style.display = 'none';
+    return;
+  }
+
+  if (q.length > 0 && q.length < 3) {
+    container.innerHTML = `
+      <div class="state">
+        <div class="state-glyph">_</div>
+        <div class="state-title">keep typing…</div>
+        <div class="state-sub">enter at least 3 characters to search</div>
       </div>`;
     countEl.innerHTML = '';
     truncWarn.style.display = 'none';
