@@ -1288,7 +1288,7 @@ function renderResults(data, query) {
   container.querySelectorAll('.act-copy').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      navigator.clipboard.writeText(btn.dataset.path).then(() => {
+      copyText(btn.dataset.path).then(() => {
         btn.textContent = '✓';
         btn.classList.add('copied');
         setTimeout(() => {
