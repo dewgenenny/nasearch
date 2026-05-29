@@ -711,6 +711,7 @@
       <span id="status-text">checking…</span>
     </div>
     <button class="btn" id="settings-toggle">⚙ settings</button>
+    <button class="btn" id="logout-btn" style="display:none">⏻ logout</button>
   </div>
 </header>
 
@@ -842,6 +843,7 @@ const errorBox       = document.getElementById('error-box');
 const statusDot      = document.getElementById('status-dot');
 const statusText     = document.getElementById('status-text');
 const settingsToggle = document.getElementById('settings-toggle');
+const logoutBtn      = document.getElementById('logout-btn');
 const settingsPanel  = document.getElementById('settings-panel');
 const reindexBtn     = document.getElementById('reindex-btn');
 const reindexMsg     = document.getElementById('reindex-msg');
@@ -1258,6 +1260,11 @@ settingsToggle.addEventListener('click', () => {
   settingsToggle.classList.toggle('active', open);
 });
 
+logoutBtn.addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST', redirect: 'manual' });
+  window.location.href = '/login';
+});
+
 document.querySelectorAll('.ivl-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const hours = parseInt(btn.dataset.hours, 10);
@@ -1348,6 +1355,7 @@ function updateStatusUI(s) {
   infoNext.textContent     = fmtNext(s.last_indexed, s.interval_hours);
   currentIntervalHours     = s.interval_hours;
   setIntervalActive(s.interval_hours);
+  logoutBtn.style.display  = s.auth_enabled ? '' : 'none';
 }
 
 async function refreshStatus() {

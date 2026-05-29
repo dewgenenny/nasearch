@@ -5,7 +5,7 @@ import io
 import json
 import zipfile
 import asyncio
-import base64
+import time
 import mimetypes
 import secrets
 from pathlib import Path
@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from typing import Iterator, Optional
 from urllib.parse import quote
 
-from fastapi import FastAPI, Query, BackgroundTasks, Request
-from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
+from fastapi import FastAPI, Query, BackgroundTasks, Request, Form
+from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
@@ -26,9 +26,34 @@ MAX_RESULTS   = int(os.environ.get("MAX_RESULTS", "500"))
 AUTH_USER     = os.environ.get("AUTH_USER",   "")
 AUTH_PASS     = os.environ.get("AUTH_PASS",   "")
 NOAUTH        = os.environ.get("NOAUTH",      "false").strip().lower() == "true"
-ZIP_MAX_FILES = int(os.environ.get("ZIP_MAX_FILES", "2000"))
-ZIP_MAX_BYTES = int(os.environ.get("ZIP_MAX_BYTES", str(2 * 1024 ** 3)))  # 2 GB
-SETTINGS_FILE = "/index/settings.json"
+ZIP_MAX_FILES  = int(os.environ.get("ZIP_MAX_FILES", "2000"))
+ZIP_MAX_BYTES  = int(os.environ.get("ZIP_MAX_BYTES", str(2 * 1024 ** 3)))  # 2 GB
+SESSION_HOURS  = int(os.environ.get("SESSION_HOURS", "24"))
+SETTINGS_FILE  = "/index/settings.json"
+SESSION_COOKIE = "nasearch_session"
+
+# In-memory session store: token → expiry timestamp
+_sessions: dict[str, float] = {}
+
+def _session_create() -> str:
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = time.time() + SESSION_HOURS * 3600
+    return token
+
+def _session_valid(token: str | None) -> bool:
+    if not token:
+        return False
+    exp = _sessions.get(token)
+    if exp is None:
+        return False
+    if time.time() > exp:
+        _sessions.pop(token, None)
+        return False
+    return True
+
+def _session_delete(token: str | None) -> None:
+    if token:
+        _sessions.pop(token, None)
 
 # ── Startup safety gate ───────────────────────────────────────────────────────
 _auth_enabled = AUTH_USER and AUTH_PASS
@@ -41,7 +66,7 @@ if not _auth_enabled and not NOAUTH:
         "║  NASearch runs as root and can serve any file on your array. ║\n"
         "║  You must choose one of:                                     ║\n"
         "║                                                              ║\n"
-        "║  A) Enable HTTP Basic Auth (recommended):                    ║\n"
+        "║  A) Enable session auth (recommended):                       ║\n"
         "║     Set AUTH_USER and AUTH_PASS in docker-compose.yml        ║\n"
         "║                                                              ║\n"
         "║  B) Acknowledge you understand the risk (no auth):           ║\n"
@@ -68,24 +93,13 @@ indexer_state = {
 _scheduler_task: Optional[asyncio.Task] = None
 
 
-# ── Auth middleware ───────────────────────────────────────────────────────────
-# Protects all routes (UI + API) when AUTH_USER and AUTH_PASS are both set.
-# When either is unset, auth is disabled so existing deployments aren't broken.
+# ── Auth helpers ─────────────────────────────────────────────────────────────
 
-def _check_basic_auth(request: Request) -> bool:
-    """Return True if the request carries valid Basic credentials."""
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Basic "):
-        return False
-    try:
-        decoded = base64.b64decode(auth_header[6:]).decode("utf-8", errors="replace")
-        username, _, password = decoded.partition(":")
-        return (
-            secrets.compare_digest(username, AUTH_USER) and
-            secrets.compare_digest(password, AUTH_PASS)
-        )
-    except Exception:
-        return False
+def _check_credentials(username: str, password: str) -> bool:
+    return (
+        secrets.compare_digest(username, AUTH_USER or "") and
+        secrets.compare_digest(password, AUTH_PASS or "")
+    )
 
 
 # ── Settings helpers ──────────────────────────────────────────────────────────
@@ -206,15 +220,17 @@ async def security_headers(request: Request, call_next):
 # ── Auth gate (middleware) ────────────────────────────────────────────────────
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    if not AUTH_USER or not AUTH_PASS:
+    if not _auth_enabled:
         return await call_next(request)
-    if _check_basic_auth(request):
+    # Login/logout routes are always public
+    if request.url.path in ("/login", "/api/logout"):
         return await call_next(request)
-    return Response(
-        "Authentication required",
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="NASearch"'},
-    )
+    if _session_valid(request.cookies.get(SESSION_COOKIE)):
+        return await call_next(request)
+    # API calls get a JSON 401; everything else redirects to login page
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": "session expired"}, status_code=401)
+    return RedirectResponse(url="/login", status_code=302)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -259,6 +275,76 @@ def safe_resolve(path: str) -> Optional[Path]:
     except (ValueError, Exception):
         return None
 
+
+# ── Login page ───────────────────────────────────────────────────────────────
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NASearch — sign in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root{{--bg:#0a0a0a;--bg2:#111;--border:#252525;--border-hi:#333;--amber:#ffb300;--amber-glow:rgba(255,179,0,.07);--text:#d8d8d8;--text-muted:#383838;--mono:'IBM Plex Mono',monospace;}}
+    *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0;}}
+    html,body{{height:100%;background:var(--bg);color:var(--text);font-family:var(--mono);display:flex;align-items:center;justify-content:center;}}
+    .card{{width:100%;max-width:340px;padding:0 24px;}}
+    .logo{{font-size:22px;font-weight:500;color:var(--amber);letter-spacing:2px;margin-bottom:5px;}}
+    .logo::before{{content:'> ';color:var(--text-muted);font-weight:300;}}
+    .sub{{font-size:10px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:40px;}}
+    .field{{margin-bottom:14px;}}
+    label{{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;}}
+    input{{width:100%;background:var(--bg2);border:1px solid var(--border-hi);color:var(--text);font-family:var(--mono);font-size:14px;padding:10px 14px;outline:none;}}
+    input:focus{{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber);}}
+    button{{width:100%;margin-top:8px;background:none;border:1px solid var(--amber);color:var(--amber);font-family:var(--mono);font-size:12px;padding:11px;cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;transition:background .12s;}}
+    button:hover{{background:var(--amber-glow);}}
+    .err{{margin-top:18px;font-size:11px;color:#ff4444;letter-spacing:.5px;text-align:center;}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">nasearch</div>
+    <div class="sub">file index</div>
+    <form method="post" action="/login">
+      <div class="field">
+        <label for="u">username</label>
+        <input id="u" name="username" type="text" autocomplete="username" autofocus required>
+      </div>
+      <div class="field">
+        <label for="p">password</label>
+        <input id="p" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit">sign in →</button>
+      {error}
+    </form>
+  </div>
+</body>
+</html>"""
+
+@app.get("/login")
+async def login_page():
+    return HTMLResponse(_LOGIN_HTML.format(error=""))
+
+@app.post("/login")
+async def login_submit(username: str = Form(""), password: str = Form("")):
+    if _check_credentials(username, password):
+        token = _session_create()
+        resp = RedirectResponse(url="/", status_code=303)
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax",
+                        max_age=SESSION_HOURS * 3600, path="/")
+        return resp
+    return HTMLResponse(
+        _LOGIN_HTML.format(error='<p class="err">invalid credentials</p>'),
+        status_code=401,
+    )
+
+@app.post("/api/logout")
+async def logout(request: Request):
+    _session_delete(request.cookies.get(SESSION_COOKIE))
+    resp = RedirectResponse(url="/login", status_code=303)
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
 
 # ── API ───────────────────────────────────────────────────────────────────────
 @app.get("/api/search")
@@ -347,6 +433,7 @@ async def status():
         "last_indexed": settings.get("last_indexed"),
         "last_duration_seconds": settings.get("last_duration_seconds"),
         "interval_hours": settings.get("interval_hours", 24),
+        "auth_enabled": bool(_auth_enabled),
     }
 
 
