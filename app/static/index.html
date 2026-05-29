@@ -127,7 +127,7 @@
     flex-direction: column;
   }
 
-  /* Scanline overlay */
+  /* Scanline overlay — hidden on light theme where it's visually distracting */
   body::after {
     content: '';
     position: fixed;
@@ -142,6 +142,7 @@
     pointer-events: none;
     z-index: 9998;
   }
+  [data-theme="light"] body::after { display: none; }
 
   /* ── Buttons ── */
   .btn {
