@@ -47,13 +47,13 @@
   <Config
     Name="Index &amp; Config Storage"
     Target="/index"
-    Default="/mnt/user/appdata/nasearch/index"
+    Default="/mnt/user/appdata/nasearch"
     Mode="rw"
     Description="Persistent storage for the plocate database and settings.json."
     Type="Path"
     Display="always"
     Required="true"
-    Mask="false">/mnt/user/appdata/nasearch/index</Config>
+    Mask="false">/mnt/user/appdata/nasearch</Config>
 
   <!-- Auth — required to start -->
   <Config
