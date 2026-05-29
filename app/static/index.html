@@ -268,7 +268,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Results table ── */
-  .results-table { width: 100%; border-collapse: collapse; }
+  .results-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .results-table th {
     text-align: left;
     font-size: 10px;
@@ -293,8 +293,8 @@
   .results-table td { padding: 9px 12px; font-size: 13px; vertical-align: middle; }
 
   .col-icon  { width: 36px; text-align: center; font-size: 15px; transition: box-shadow 0.07s; }
-  .col-name  { font-weight: 500; color: var(--text); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .col-path  { color: var(--text-dim); font-size: 12px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-name  { font-weight: 500; color: var(--text); width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-path  { color: var(--text-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .col-ext   { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; width: 60px; }
   .col-size  { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 76px; }
   .col-acts  { width: 150px; text-align: right; white-space: nowrap; }
