@@ -8,6 +8,12 @@ Point it at one or more directories, let it index, then search from a browser.
 
 ## Install
 
+### Unraid — Community Applications
+
+Search for **NASearch** in the Community Applications store and install directly from there. All config fields (port, paths, auth) are exposed in the Unraid template UI.
+
+### Manual / Docker Compose
+
 ### 1. Clone the repo onto your server
 
 ```bash
