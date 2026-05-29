@@ -24,9 +24,33 @@ PRUNE_PATHS   = os.environ.get("PRUNE_PATHS", "/data/appdata /data/system /data/
 MAX_RESULTS   = int(os.environ.get("MAX_RESULTS", "500"))
 AUTH_USER     = os.environ.get("AUTH_USER",   "")
 AUTH_PASS     = os.environ.get("AUTH_PASS",   "")
+NOAUTH        = os.environ.get("NOAUTH",      "false").strip().lower() == "true"
 ZIP_MAX_FILES = int(os.environ.get("ZIP_MAX_FILES", "2000"))
 ZIP_MAX_BYTES = int(os.environ.get("ZIP_MAX_BYTES", str(2 * 1024 ** 3)))  # 2 GB
 SETTINGS_FILE = "/index/settings.json"
+
+# ── Startup safety gate ───────────────────────────────────────────────────────
+_auth_enabled = AUTH_USER and AUTH_PASS
+if not _auth_enabled and not NOAUTH:
+    print(
+        "\n"
+        "╔══════════════════════════════════════════════════════════════╗\n"
+        "║                  NASearch won't start                       ║\n"
+        "╠══════════════════════════════════════════════════════════════╣\n"
+        "║  NASearch runs as root and can serve any file on your array. ║\n"
+        "║  You must choose one of:                                     ║\n"
+        "║                                                              ║\n"
+        "║  A) Enable HTTP Basic Auth (recommended):                    ║\n"
+        "║     Set AUTH_USER and AUTH_PASS in docker-compose.yml        ║\n"
+        "║                                                              ║\n"
+        "║  B) Acknowledge you understand the risk (no auth):           ║\n"
+        "║     Set NOAUTH=true in docker-compose.yml                    ║\n"
+        "║                                                              ║\n"
+        "║  See README.md for details.                                  ║\n"
+        "╚══════════════════════════════════════════════════════════════╝\n",
+        file=__import__("sys").stderr,
+    )
+    raise SystemExit(1)
 
 DEFAULT_SETTINGS = {
     "interval_hours": 24,   # 0 = manual only

@@ -8,13 +8,24 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /mnt/user:/data:ro                          # your array, read-only
-      - ./index:/index    # index DB + settings.json
+      - /mnt/user:/data:ro   # your array, read-only
+      - ./index:/index        # index DB + settings.json
     environment:
       - LOCATE_DB=/index/files.db
       - DATA_PATH=/data
       - PRUNE_PATHS=/data/appdata /data/system /data/domains /data/isos
       - MAX_RESULTS=500
-      # Optional: enable HTTP Basic Auth. Both must be set or auth is disabled.
+
+      # ── Auth (choose one) ────────────────────────────────────────────────────
+      #
+      # NASearch will refuse to start until you pick an option below.
+      #
+      # Option A — HTTP Basic Auth (recommended):
+      #   Uncomment both lines and set your credentials.
       # - AUTH_USER=admin
       # - AUTH_PASS=your-strong-password-here
+      #
+      # Option B — No auth (you accept the risk):
+      #   Anyone who can reach port 8000 can search and download your files.
+      #   Only use this on a fully trusted, firewalled network.
+      # - NOAUTH=true
