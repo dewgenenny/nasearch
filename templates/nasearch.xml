@@ -107,4 +107,35 @@
     Required="false"
     Mask="false">500</Config>
 
+  <!-- Homepage dashboard integration -->
+  <Config
+    Name="Homepage: Name"
+    Target="homepage.name"
+    Default="NASearch"
+    Description="Display name shown on your Homepage dashboard. Leave blank if you are not using Homepage (https://gethomepage.dev)."
+    Type="Label"
+    Display="advanced"
+    Required="false"
+    Mask="false">NASearch</Config>
+
+  <Config
+    Name="Homepage: Group"
+    Target="homepage.group"
+    Default=""
+    Description="Dashboard group/category to place NASearch in (e.g. Tools, Media, System). Leave blank if not using Homepage."
+    Type="Label"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Homepage: URL"
+    Target="homepage.href"
+    Default=""
+    Description="Full URL Homepage should link to (e.g. http://192.168.1.10:8000 or your reverse-proxy address). Leave blank if not using Homepage."
+    Type="Label"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
 </Container>
