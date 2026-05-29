@@ -287,7 +287,10 @@ async def search(
     results = []
     for path in lines:
         p = Path(path)
-        is_dir = p.is_dir()
+        try:
+            is_dir = p.is_dir()
+        except OSError:
+            is_dir = False
         results.append({
             "path": path,
             "name": p.name,
