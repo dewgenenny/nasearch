@@ -4,6 +4,12 @@ Lightweight file search for self-hosted storage. FastAPI + plocate, no Elasticse
 
 Point it at one or more directories, let it index, then search from a browser.
 
+## Why not just use `find`?
+
+The shell has excellent tools for this — `find`, `locate`, `fd`, `ripgrep` — and if you're already comfortable in a terminal they're great. NASearch is for a different situation: searching a large NAS array from a browser, sharing access with people who aren't comfortable on the command line, or quickly previewing a photo or video without downloading it first.
+
+The bigger practical issue with `find /mnt/user | grep something` on a large array is speed. `find` traverses the filesystem in real time, touching every directory on every disk. On an array with millions of files across spinning drives, that can take several minutes. NASearch uses `plocate`, which pre-builds a compressed index — searches return in milliseconds regardless of array size. The trade-off is a small staleness window between index runs, handled by the configurable re-index schedule and manual re-index button.
+
 ---
 
 ## Install
@@ -67,7 +73,7 @@ volumes:
 
 NASearch **will not start** until you make an explicit auth choice. Open `docker-compose.yml` and uncomment one of the two options in the `# Auth` section:
 
-**Option A — HTTP Basic Auth (recommended):**
+**Option A — Session auth (recommended):**
 
 ```yaml
 - AUTH_USER=admin
@@ -102,7 +108,7 @@ curl -X POST http://localhost:8000/api/reindex
 
 NASearch runs as root inside the container and can serve any file under `/data`. That's an intentional trade-off — see [Why root?](#why-the-container-runs-as-root) below. Because of this, the app **refuses to start** unless you have explicitly acknowledged the auth situation via one of the two options above.
 
-### HTTP Basic Auth
+### Session auth
 
 Set both variables in `docker-compose.yml`:
 
@@ -112,11 +118,11 @@ environment:
   - AUTH_PASS=your-strong-password-here
 ```
 
-Both must be set. Credentials are validated with a constant-time compare to resist timing attacks.
+NASearch uses session cookie authentication. Credentials are submitted once via a login form; the server validates them with a constant-time compare and issues a signed `httpOnly` session cookie (24-hour expiry by default, configurable with `SESSION_HOURS`). The cookie is scoped with `SameSite=lax` for CSRF protection. Credentials are never sent again after the initial login — subsequent requests just carry the session cookie.
 
 ### Use HTTPS — and think carefully before exposing it at all
 
-Basic auth credentials are Base64-encoded in every request (effectively cleartext). If you do expose NASearch outside your local network, **you must put it behind a TLS-terminating reverse proxy**. [Nginx Proxy Manager](https://nginxproxymanager.com/) and [Caddy](https://caddyserver.com/) are popular options.
+Without TLS, the login POST itself is cleartext on the wire. If you do expose NASearch outside your local network, **you must put it behind a TLS-terminating reverse proxy**. [Nginx Proxy Manager](https://nginxproxymanager.com/) and [Caddy](https://caddyserver.com/) are popular options.
 
 That said, our strong recommendation is **don't expose it to the internet at all**. NASearch is a root-running process that can read and serve every file on your array. Even with auth and TLS in place, you're one vulnerability away from exposing everything. If you need remote access, a VPN (Tailscale, WireGuard) is a much safer boundary — access your local NASearch instance over the VPN rather than punching a hole in your firewall.
 
@@ -128,7 +134,7 @@ The actual risk surface is kept small by other means:
 
 - All source volumes are mounted **read-only** — the process can never modify your files
 - All file-serving paths are validated to prevent directory traversal outside `/data`
-- HTTP Basic Auth gates the entire UI when credentials are configured
+- Session cookie auth gates the entire UI when credentials are configured
 - Docker's own namespace and cgroup isolation still applies
 
 ---
@@ -137,8 +143,9 @@ The actual risk surface is kept small by other means:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUTH_USER` | _(unset)_ | Basic auth username; both must be set to enable auth |
-| `AUTH_PASS` | _(unset)_ | Basic auth password |
+| `AUTH_USER` | _(unset)_ | Login username; both must be set to enable session auth |
+| `AUTH_PASS` | _(unset)_ | Login password |
+| `SESSION_HOURS` | `24` | Session cookie lifetime in hours |
 | `NOAUTH` | `false` | Set `true` to start without auth (acknowledged risk) |
 | `DATA_PATH` | `/data` | Root path that is indexed and served |
 | `LOCATE_DB` | `/index/files.db` | Path to the plocate database |
