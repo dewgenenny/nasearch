@@ -1,5 +1,6 @@
 import subprocess
 import os
+import stat as stat_mod
 import io
 import json
 import zipfile
@@ -311,17 +312,23 @@ async def search(
     results = []
     for path in lines:
         p = Path(path)
+        st = None
+        is_dir = False
         try:
-            is_dir = p.is_dir()
+            st = p.stat()
+            is_dir = stat_mod.S_ISDIR(st.st_mode)
         except OSError:
-            is_dir = False
+            pass
+        size_bytes = st.st_size if (st and not is_dir) else None
         results.append({
             "path": path,
             "name": p.name,
             "dir": str(p.parent),
             "ext": "" if is_dir else p.suffix.lower().lstrip("."),
             "icon": get_icon(path),
-            "size": None if is_dir else format_size(path),
+            "size": format_size_bytes(size_bytes) if size_bytes is not None else None,
+            "size_bytes": size_bytes,
+            "mtime": int(st.st_mtime) if st else None,
             "is_dir": is_dir,
         })
 

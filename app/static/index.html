@@ -300,7 +300,15 @@
   .col-path  { color: var(--text-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .col-ext   { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; width: 55px; }
   .col-size  { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 70px; }
+  .col-mtime { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 82px; }
   .col-acts  { width: 112px; text-align: right; white-space: nowrap; }
+
+  /* Sortable column headers */
+  .results-table th.sortable { cursor: pointer; user-select: none; }
+  .results-table th.sortable:hover { color: var(--text-dim); }
+  .sort-ind { margin-left: 3px; opacity: 0; }
+  .results-table th.sort-asc  .sort-ind,
+  .results-table th.sort-desc .sort-ind { opacity: 1; color: var(--amber); }
 
   /* Row action buttons (appear on hover) */
   .act-btn {
@@ -920,6 +928,75 @@ function copyText(text) {
   });
 }
 
+// ── Date formatting ───────────────────────────────────────────────────────────
+function fmtMtime(ts) {
+  if (!ts) return '—';
+  const now  = Math.floor(Date.now() / 1000);
+  const diff = now - ts;
+  if (diff < 3600)        return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400)       return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 7 * 86400)  return Math.floor(diff / 86400) + 'd ago';
+  const d = new Date(ts * 1000);
+  const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  return d.getFullYear() === new Date().getFullYear()
+    ? `${mo} ${d.getDate()}`
+    : `${mo} ${d.getDate()} ${d.getFullYear()}`;
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────────
+const sortState = { col: null, dir: 1 };
+
+function applySort(col, restore = false) {
+  if (!col) return;
+  const table = document.querySelector('.results-table');
+  if (!table) return;
+
+  if (!restore) {
+    if (sortState.col === col) {
+      sortState.dir *= -1;
+    } else {
+      sortState.col = col;
+      sortState.dir = (col === 'size' || col === 'mtime') ? -1 : 1;
+    }
+  }
+
+  const tbody = table.querySelector('tbody');
+  const rows  = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    let va, vb;
+    if (col === 'name') {
+      va = a.dataset.name  || '';
+      vb = b.dataset.name  || '';
+      return sortState.dir * va.localeCompare(vb);
+    }
+    if (col === 'size') {
+      va = parseInt(a.dataset.sizeBytes) || 0;
+      vb = parseInt(b.dataset.sizeBytes) || 0;
+      return sortState.dir * (va - vb);
+    }
+    if (col === 'mtime') {
+      va = parseInt(a.dataset.mtime) || 0;
+      vb = parseInt(b.dataset.mtime) || 0;
+      return sortState.dir * (va - vb);
+    }
+    return 0;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+
+  // Update header indicators
+  table.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === sortState.col) {
+      th.classList.add(sortState.dir === 1 ? 'sort-asc' : 'sort-desc');
+      const ind = th.querySelector('.sort-ind');
+      if (ind) ind.textContent = sortState.dir === 1 ? '↑' : '↓';
+    } else {
+      const ind = th.querySelector('.sort-ind');
+      if (ind) ind.textContent = '↕';
+    }
+  });
+}
+
 // ── Download ──────────────────────────────────────────────────────────────────
 function downloadFile(path) {
   const a = document.createElement('a');
@@ -1234,12 +1311,22 @@ function renderResults(data, query) {
     const rowCls = ptype ? 'result-row previewable' : 'result-row';
     const isDir = !!r.is_dir;
     return `
-    <tr class="${rowCls}" data-path="${escHtml(r.path)}" data-dir="${escHtml(r.dir)}" data-ext="${escHtml(r.ext)}" data-icon="${escHtml(r.icon)}" data-size="${escHtml(r.size||'')}" data-isdir="${isDir ? '1' : ''}">
+    <tr class="${rowCls}"
+        data-path="${escHtml(r.path)}"
+        data-dir="${escHtml(r.dir)}"
+        data-ext="${escHtml(r.ext)}"
+        data-icon="${escHtml(r.icon)}"
+        data-size="${escHtml(r.size||'')}"
+        data-isdir="${isDir ? '1' : ''}"
+        data-name="${escHtml(r.name.toLowerCase())}"
+        data-size-bytes="${r.size_bytes ?? ''}"
+        data-mtime="${r.mtime ?? ''}">
       <td class="col-icon">${escHtml(r.icon)}</td>
       <td class="col-name">${highlight(r.name, query)}</td>
       <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
       <td class="col-ext">${escHtml(r.ext || '—')}</td>
       <td class="col-size">${escHtml(r.size || '—')}</td>
+      <td class="col-mtime">${fmtMtime(r.mtime)}</td>
       <td class="col-acts">
         <button class="act-btn act-zip"  title="${isDir ? 'Choose ancestor to zip' : 'Download parent folder as .zip'}">zip</button>
         <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="${isDir ? 'Download folder as .zip' : 'Download file'}">↓</button>
@@ -1253,15 +1340,22 @@ function renderResults(data, query) {
       <thead>
         <tr>
           <th class="col-icon"></th>
-          <th class="col-name">name</th>
+          <th class="col-name sortable" data-sort="name">name <span class="sort-ind">↕</span></th>
           <th class="col-path">path</th>
           <th class="col-ext">type</th>
-          <th class="col-size">size</th>
+          <th class="col-size sortable" data-sort="size">size <span class="sort-ind">↕</span></th>
+          <th class="col-mtime sortable" data-sort="mtime">modified <span class="sort-ind">↕</span></th>
           <th class="col-acts"></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>`;
+
+  // Wire up sort headers
+  container.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => applySort(th.dataset.sort));
+  });
+  applySort(sortState.col, true); // re-apply current sort without toggling direction
 
   // Wire up action buttons — stopPropagation so row click doesn't also fire
   container.querySelectorAll('.act-zip').forEach(btn => {
