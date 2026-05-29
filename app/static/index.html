@@ -293,11 +293,11 @@
   .results-table td { padding: 9px 12px; font-size: 13px; vertical-align: middle; }
 
   .col-icon  { width: 36px; text-align: center; font-size: 15px; transition: box-shadow 0.07s; }
-  .col-name  { font-weight: 500; color: var(--text); width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-name  { font-weight: 500; color: var(--text); width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .col-path  { color: var(--text-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .col-ext   { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; width: 60px; }
-  .col-size  { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 76px; }
-  .col-acts  { width: 150px; text-align: right; white-space: nowrap; }
+  .col-ext   { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; width: 55px; }
+  .col-size  { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; width: 70px; }
+  .col-acts  { width: 112px; text-align: right; white-space: nowrap; }
 
   /* Row action buttons (appear on hover) */
   .act-btn {
@@ -1247,22 +1247,14 @@ function renderResults(data, query) {
 
   container.innerHTML = `
     <table class="results-table">
-      <colgroup>
-        <col style="width:36px">
-        <col style="width:22%">
-        <col>
-        <col style="width:60px">
-        <col style="width:76px">
-        <col style="width:150px">
-      </colgroup>
       <thead>
         <tr>
-          <th></th>
-          <th>name</th>
-          <th>path</th>
-          <th>type</th>
-          <th style="text-align:right">size</th>
-          <th></th>
+          <th class="col-icon"></th>
+          <th class="col-name">name</th>
+          <th class="col-path">path</th>
+          <th class="col-ext">type</th>
+          <th class="col-size">size</th>
+          <th class="col-acts"></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
