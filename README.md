@@ -32,6 +32,18 @@ curl -X POST http://localhost:8000/api/reindex
 
 > **Auth is disabled by default.** Anyone who can reach port 8000 can search and download files from your array.
 
+### Why the container runs as root
+
+NASearch runs as root inside the container by design. `updatedb` needs to crawl the entire array — including paths owned by other users, Docker btrfs subvolumes, and system directories — to build a complete index. A restricted user would silently miss anything it can't `stat`, defeating the point of the tool.
+
+The actual risk surface is kept small by other means:
+- `/data` is mounted **read-only**, so the process can never modify your files
+- All file-serving paths are validated with `safe_resolve()` to prevent directory traversal
+- HTTP Basic Auth (see below) gates the entire UI when credentials are configured
+- Docker's own namespace and cgroup isolation still applies
+
+If you're uncomfortable with a root container, the alternative is to give a dedicated UID read access to your entire array — but that's usually more effort for the same effective outcome on a home NAS.
+
 ### Enable HTTP Basic Auth
 
 Uncomment and set credentials in `docker-compose.yml`:
