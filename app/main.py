@@ -351,7 +351,7 @@ async def logout(request: Request):
 async def search(
     q: str = Query("", min_length=0),
     ext: Optional[str] = Query(None),
-    limit: int = Query(200, le=MAX_RESULTS),
+    limit: int = Query(MAX_RESULTS, le=MAX_RESULTS),
 ):
     if not q and not ext:
         return JSONResponse({"results": [], "total": 0, "truncated": False})
@@ -364,10 +364,8 @@ async def search(
 
     pattern = q if q else f"*.{ext.lstrip('.')}"
 
-    # Cap locate's output at MAX_RESULTS — without -n, a short query can return
-    # hundreds of thousands of paths and buffer them all in Python memory.
-    # When q+ext are both set we need extra headroom because we post-filter.
-    fetch_n = MAX_RESULTS if (q and ext) else limit
+    # Cap locate's output at MAX_RESULTS to bound memory usage.
+    fetch_n = MAX_RESULTS
     cmd = ["locate", "-d", DB_PATH, "-i", "-n", str(fetch_n), "--", pattern]
 
     # Use async subprocess so we don't block the event loop while locate runs.

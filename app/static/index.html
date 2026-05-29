@@ -875,7 +875,7 @@
   <div class="toolbar">
     <div class="result-count" id="result-count"></div>
     <div id="truncated-warn" class="truncated-warn" style="display:none">
-      ⚠ showing first 200 — refine your query
+      ⚠ results capped at MAX_RESULTS limit — refine your query
     </div>
     <div id="loading" style="display:none"><span class="spinner"></span></div>
   </div>
@@ -1065,55 +1065,156 @@ function fmtMtime(ts) {
     : `${mo} ${d.getDate()} ${d.getFullYear()}`;
 }
 
+// ── Result data store ────────────────────────────────────────────────────────
+let allResults     = [];   // raw from API, never mutated
+let displayResults = [];   // after sort + type filter
+let _lastQuery     = '';
+
+// ── Infinite scroll ───────────────────────────────────────────────────────────
+const IS = { BATCH: 100, rendered: 0, observer: null };
+
+function makeRow(r, query) {
+  const ptype  = previewType(r.ext);
+  const rowCls = ptype ? 'result-row previewable' : 'result-row';
+  return `
+  <tr class="${rowCls}"
+      data-path="${escHtml(r.path)}"
+      data-dir="${escHtml(r.dir)}"
+      data-ext="${escHtml(r.ext)}"
+      data-icon="${escHtml(r.icon)}"
+      data-size="${escHtml(r.size||'')}"
+      data-isdir="${r.is_dir ? '1' : ''}"
+      data-name="${escHtml(r.name.toLowerCase())}"
+      data-size-bytes="${r.size_bytes ?? ''}"
+      data-mtime="${r.mtime ?? ''}">
+    <td class="col-icon">${escHtml(r.icon)}</td>
+    <td class="col-name">${highlight(r.name, query)}</td>
+    <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
+    <td class="col-ext">${escHtml(r.ext || '—')}</td>
+    <td class="col-size">${escHtml(r.size || '—')}</td>
+    <td class="col-mtime">${fmtMtime(r.mtime)}</td>
+    <td class="col-acts">
+      <button class="act-btn act-zip"  title="${r.is_dir ? 'Choose ancestor to zip' : 'Download parent folder as .zip'}">zip</button>
+      <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="${r.is_dir ? 'Download folder as .zip' : 'Download file'}">↓</button>
+      <button class="act-btn act-copy" data-path="${escHtml(r.path)}" title="Copy path">copy</button>
+    </td>
+  </tr>`;
+}
+
+function isAppend() {
+  const tbody = document.getElementById('is-tbody');
+  const sentinel = document.getElementById('is-sentinel');
+  if (!tbody || !sentinel) return;
+  const slice = displayResults.slice(IS.rendered, IS.rendered + IS.BATCH);
+  if (!slice.length) { sentinel.style.display = 'none'; return; }
+  tbody.insertAdjacentHTML('beforeend', slice.map(r => makeRow(r, _lastQuery)).join(''));
+  IS.rendered += slice.length;
+  if (IS.rendered >= displayResults.length) sentinel.style.display = 'none';
+}
+
+function isInit() {
+  IS.observer = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) isAppend();
+  }, { rootMargin: '200px' });
+
+  // Event delegation for all row interactions
+  container.addEventListener('click', e => {
+    const btn = e.target.closest('.act-btn');
+    const row = e.target.closest('.result-row');
+    if (!row) return;
+
+    if (btn) {
+      e.stopPropagation();
+      const isDir = row.dataset.isdir === '1';
+      if (btn.classList.contains('act-zip')) {
+        showZipPicker(row.dataset.path, btn, isDir);
+      } else if (btn.classList.contains('act-dl')) {
+        if (isDir) showZipPicker(row.dataset.path, btn, true);
+        else downloadFile(btn.dataset.path);
+      } else if (btn.classList.contains('act-copy')) {
+        copyText(btn.dataset.path).then(() => {
+          btn.textContent = '✓';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
+        });
+      }
+      return;
+    }
+
+    const result = {
+      path:   row.dataset.path,
+      ext:    row.dataset.ext,
+      icon:   row.dataset.icon,
+      size:   row.dataset.size,
+      name:   row.querySelector('.col-name').textContent,
+      dir:    row.querySelector('.col-path span').title,
+      is_dir: row.dataset.isdir === '1',
+    };
+    openPreview(result, row);
+  });
+}
+
+function isMount() {
+  window.scrollTo(0, 0);
+  IS.rendered = 0;
+  if (IS.observer) IS.observer.disconnect();
+
+  container.innerHTML = `
+    <table class="results-table" id="is-table">
+      <thead>
+        <tr>
+          <th class="col-icon"></th>
+          <th class="col-name sortable" data-sort="name">name <span class="sort-ind">↕</span></th>
+          <th class="col-path">path</th>
+          <th class="col-ext">type</th>
+          <th class="col-size sortable" data-sort="size">size <span class="sort-ind">↕</span></th>
+          <th class="col-mtime sortable" data-sort="mtime">modified <span class="sort-ind">↕</span></th>
+          <th class="col-acts"></th>
+        </tr>
+      </thead>
+      <tbody id="is-tbody"></tbody>
+    </table>
+    <div id="is-sentinel" style="height:1px"></div>`;
+
+  document.getElementById('is-table').querySelector('thead').addEventListener('click', e => {
+    const th = e.target.closest('th.sortable');
+    if (th) applySort(th.dataset.sort);
+  });
+
+  isAppend();
+  IS.observer.observe(document.getElementById('is-sentinel'));
+  updateSortHeaders();
+}
+
 // ── Sort ──────────────────────────────────────────────────────────────────────
 const sortState = { col: null, dir: 1 };
 
 function applySort(col, restore = false) {
   if (!col) return;
-  const table = document.querySelector('.results-table');
-  if (!table) return;
-
   if (!restore) {
-    if (sortState.col === col) {
-      sortState.dir *= -1;
-    } else {
-      sortState.col = col;
-      sortState.dir = (col === 'size' || col === 'mtime') ? -1 : 1;
-    }
+    if (sortState.col === col) sortState.dir *= -1;
+    else { sortState.col = col; sortState.dir = (col === 'size' || col === 'mtime') ? -1 : 1; }
   }
-
-  const tbody = table.querySelector('tbody');
-  const rows  = Array.from(tbody.querySelectorAll('tr'));
-  rows.sort((a, b) => {
-    let va, vb;
-    if (col === 'name') {
-      va = a.dataset.name  || '';
-      vb = b.dataset.name  || '';
-      return sortState.dir * va.localeCompare(vb);
-    }
-    if (col === 'size') {
-      va = parseInt(a.dataset.sizeBytes) || 0;
-      vb = parseInt(b.dataset.sizeBytes) || 0;
-      return sortState.dir * (va - vb);
-    }
-    if (col === 'mtime') {
-      va = parseInt(a.dataset.mtime) || 0;
-      vb = parseInt(b.dataset.mtime) || 0;
-      return sortState.dir * (va - vb);
-    }
+  const d = sortState.dir;
+  displayResults.sort((a, b) => {
+    if (col === 'name')  return d * a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    if (col === 'size')  return d * ((a.size_bytes || 0) - (b.size_bytes || 0));
+    if (col === 'mtime') return d * ((a.mtime || 0) - (b.mtime || 0));
     return 0;
   });
-  rows.forEach(r => tbody.appendChild(r));
+  isMount();
+}
 
-  // Update header indicators
-  table.querySelectorAll('th.sortable').forEach(th => {
+function updateSortHeaders() {
+  const tbl = document.getElementById('is-table');
+  if (!tbl) return;
+  tbl.querySelectorAll('th.sortable').forEach(th => {
     th.classList.remove('sort-asc', 'sort-desc');
+    const ind = th.querySelector('.sort-ind');
     if (th.dataset.sort === sortState.col) {
       th.classList.add(sortState.dir === 1 ? 'sort-asc' : 'sort-desc');
-      const ind = th.querySelector('.sort-ind');
       if (ind) ind.textContent = sortState.dir === 1 ? '↑' : '↓';
     } else {
-      const ind = th.querySelector('.sort-ind');
       if (ind) ind.textContent = '↕';
     }
   });
@@ -1121,28 +1222,23 @@ function applySort(col, restore = false) {
 
 // ── Type filters ─────────────────────────────────────────────────────────────
 const TYPE_CATS = [
-  { key: 'folder', label: '📁 folders',  test: r => r.isdir === '1' },
+  { key: 'folder', label: '📁 folders',  test: r => r.is_dir },
   { key: 'image',  label: '🖼 images',   test: r => EXT.image.has(r.ext) },
   { key: 'video',  label: '🎥 video',    test: r => EXT.video.has(r.ext) },
   { key: 'audio',  label: '🎵 audio',    test: r => EXT.audio.has(r.ext) },
   { key: 'doc',    label: '📄 docs',     test: r => EXT.pdf.has(r.ext) || EXT.text.has(r.ext) },
-  { key: 'other',  label: '📦 other',    test: r => r.isdir !== '1' && !EXT.image.has(r.ext) && !EXT.video.has(r.ext) && !EXT.audio.has(r.ext) && !EXT.pdf.has(r.ext) && !EXT.text.has(r.ext) },
+  { key: 'other',  label: '📦 other',    test: r => !r.is_dir && !EXT.image.has(r.ext) && !EXT.video.has(r.ext) && !EXT.audio.has(r.ext) && !EXT.pdf.has(r.ext) && !EXT.text.has(r.ext) },
 ];
 
 const activeFilters = new Set();
 
 function buildTypeFilters() {
   const bar = document.getElementById('type-filters');
-  // Gather counts from current rows
-  const rows = Array.from(document.querySelectorAll('.result-row'));
-  if (!rows.length) { bar.classList.remove('visible'); return; }
+  if (!allResults.length) { bar.classList.remove('visible'); return; }
 
   const counts = {};
-  TYPE_CATS.forEach(cat => {
-    counts[cat.key] = rows.filter(r => cat.test(r.dataset)).length;
-  });
+  TYPE_CATS.forEach(cat => { counts[cat.key] = allResults.filter(cat.test).length; });
 
-  // Only show categories that have at least one result
   const visible = TYPE_CATS.filter(c => counts[c.key] > 0);
   if (visible.length <= 1) { bar.classList.remove('visible'); return; }
 
@@ -1157,7 +1253,6 @@ function buildTypeFilters() {
       if (activeFilters.has(cat)) activeFilters.delete(cat);
       else activeFilters.add(cat);
       applyTypeFilter();
-      buildTypeFilters(); // refresh counts + active state
     });
   });
 
@@ -1165,14 +1260,17 @@ function buildTypeFilters() {
 }
 
 function applyTypeFilter() {
-  document.querySelectorAll('.result-row').forEach(row => {
-    if (!activeFilters.size) {
-      row.style.display = '';
-      return;
-    }
-    const match = TYPE_CATS.some(cat => activeFilters.has(cat.key) && cat.test(row.dataset));
-    row.style.display = match ? '' : 'none';
-  });
+  if (!activeFilters.size) {
+    displayResults = [...allResults];
+  } else {
+    displayResults = allResults.filter(r =>
+      TYPE_CATS.some(cat => activeFilters.has(cat.key) && cat.test(r))
+    );
+  }
+  if (sortState.col) applySort(sortState.col, true);
+  countEl.innerHTML = `<span>${displayResults.length.toLocaleString()}</span> result${displayResults.length !== 1 ? 's' : ''}`;
+  isMount();
+  buildTypeFilters();
 }
 
 // ── Download ──────────────────────────────────────────────────────────────────
@@ -1483,17 +1581,22 @@ function renderResults(data, query) {
   errorBox.style.display = 'none';
   activeFilters.clear();
   document.getElementById('type-filters').classList.remove('visible');
+  truncWarn.style.display = 'none';
+
   if (data.error) {
     showError(data.error);
     container.innerHTML = '';
     countEl.innerHTML = '';
+    allResults = [];
+    displayResults = [];
     return;
   }
 
-  const { results, total, truncated } = data;
-  truncWarn.style.display = truncated ? 'block' : 'none';
+  const { results, truncated } = data;
 
   if (!results.length) {
+    allResults = [];
+    displayResults = [];
     countEl.innerHTML = '';
     container.innerHTML = `
       <div class="state">
@@ -1504,114 +1607,18 @@ function renderResults(data, query) {
     return;
   }
 
-  countEl.innerHTML = `<span>${total.toLocaleString()}</span> result${total !== 1 ? 's' : ''}`;
+  allResults     = results;
+  displayResults = [...results];
+  _lastQuery     = query;
 
-  const rows = results.map(r => {
-    const ptype  = previewType(r.ext);
-    const rowCls = ptype ? 'result-row previewable' : 'result-row';
-    const isDir = !!r.is_dir;
-    return `
-    <tr class="${rowCls}"
-        data-path="${escHtml(r.path)}"
-        data-dir="${escHtml(r.dir)}"
-        data-ext="${escHtml(r.ext)}"
-        data-icon="${escHtml(r.icon)}"
-        data-size="${escHtml(r.size||'')}"
-        data-isdir="${isDir ? '1' : ''}"
-        data-name="${escHtml(r.name.toLowerCase())}"
-        data-size-bytes="${r.size_bytes ?? ''}"
-        data-mtime="${r.mtime ?? ''}">
-      <td class="col-icon">${escHtml(r.icon)}</td>
-      <td class="col-name">${highlight(r.name, query)}</td>
-      <td class="col-path"><span title="${escHtml(r.path)}">${highlight(r.dir, query)}</span></td>
-      <td class="col-ext">${escHtml(r.ext || '—')}</td>
-      <td class="col-size">${escHtml(r.size || '—')}</td>
-      <td class="col-mtime">${fmtMtime(r.mtime)}</td>
-      <td class="col-acts">
-        <button class="act-btn act-zip"  title="${isDir ? 'Choose ancestor to zip' : 'Download parent folder as .zip'}">zip</button>
-        <button class="act-btn act-dl"   data-path="${escHtml(r.path)}" title="${isDir ? 'Download folder as .zip' : 'Download file'}">↓</button>
-        <button class="act-btn act-copy" data-path="${escHtml(r.path)}" title="Copy path">copy</button>
-      </td>
-    </tr>`;
-  }).join('');
+  if (truncated) truncWarn.style.display = 'block';
 
-  container.innerHTML = `
-    <table class="results-table">
-      <thead>
-        <tr>
-          <th class="col-icon"></th>
-          <th class="col-name sortable" data-sort="name">name <span class="sort-ind">↕</span></th>
-          <th class="col-path">path</th>
-          <th class="col-ext">type</th>
-          <th class="col-size sortable" data-sort="size">size <span class="sort-ind">↕</span></th>
-          <th class="col-mtime sortable" data-sort="mtime">modified <span class="sort-ind">↕</span></th>
-          <th class="col-acts"></th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+  countEl.innerHTML = `<span>${results.length.toLocaleString()}</span> result${results.length !== 1 ? 's' : ''}`;
 
-  // Wire up sort headers
-  container.querySelectorAll('th.sortable').forEach(th => {
-    th.addEventListener('click', () => applySort(th.dataset.sort));
-  });
-  applySort(sortState.col, true); // re-apply current sort without toggling direction
+  if (sortState.col) applySort(sortState.col, true);
+
+  isMount();
   buildTypeFilters();
-
-  // Wire up action buttons — stopPropagation so row click doesn't also fire
-  container.querySelectorAll('.act-zip').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const row   = btn.closest('tr');
-      const isDir = row.dataset.isdir === '1';
-      showZipPicker(row.dataset.path, btn, isDir);
-    });
-  });
-
-  container.querySelectorAll('.act-dl').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const row   = btn.closest('tr');
-      const isDir = row.dataset.isdir === '1';
-      if (isDir) {
-        // Directories can't be streamed as files — open the zip picker
-        // with the directory itself pre-selected
-        showZipPicker(row.dataset.path, btn, true);
-      } else {
-        downloadFile(btn.dataset.path);
-      }
-    });
-  });
-
-  container.querySelectorAll('.act-copy').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      copyText(btn.dataset.path).then(() => {
-        btn.textContent = '✓';
-        btn.classList.add('copied');
-        setTimeout(() => {
-          btn.textContent = 'copy';
-          btn.classList.remove('copied');
-        }, 1500);
-      });
-    });
-  });
-
-  // Row click → preview
-  container.querySelectorAll('.result-row').forEach(row => {
-    row.addEventListener('click', () => {
-      const result = {
-        path:   row.dataset.path,
-        ext:    row.dataset.ext,
-        icon:   row.dataset.icon,
-        size:   row.dataset.size,
-        name:   row.querySelector('.col-name').textContent,
-        dir:    row.querySelector('.col-path span').title,
-        is_dir: row.dataset.isdir === '1',
-      };
-      openPreview(result, row);
-    });
-  });
 }
 
 async function doSearch() {
@@ -1909,7 +1916,8 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Initial render
+// Boot
+isInit();
 doSearch();
 </script>
 </body>
