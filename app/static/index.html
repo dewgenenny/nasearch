@@ -270,6 +270,31 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ── Type filter pills ── */
+  .type-filters {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .type-filters.visible { display: flex; }
+  .tf-pill {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 10px;
+    cursor: pointer;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+    white-space: nowrap;
+  }
+  .tf-pill:hover  { border-color: var(--border-hi); color: var(--text-dim); }
+  .tf-pill.active { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+  .tf-count { margin-left: 5px; opacity: 0.6; }
+
   /* ── Results table ── */
   .results-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .results-table th {
@@ -760,6 +785,7 @@
     <div id="loading" style="display:none"><span class="spinner"></span></div>
   </div>
 
+  <div id="type-filters" class="type-filters"></div>
   <div id="results-container"></div>
 </main>
 
@@ -994,6 +1020,62 @@ function applySort(col, restore = false) {
       const ind = th.querySelector('.sort-ind');
       if (ind) ind.textContent = '↕';
     }
+  });
+}
+
+// ── Type filters ─────────────────────────────────────────────────────────────
+const TYPE_CATS = [
+  { key: 'folder', label: '📁 folders',  test: r => r.isdir === '1' },
+  { key: 'image',  label: '🖼 images',   test: r => EXT.image.has(r.ext) },
+  { key: 'video',  label: '🎥 video',    test: r => EXT.video.has(r.ext) },
+  { key: 'audio',  label: '🎵 audio',    test: r => EXT.audio.has(r.ext) },
+  { key: 'doc',    label: '📄 docs',     test: r => EXT.pdf.has(r.ext) || EXT.text.has(r.ext) },
+  { key: 'other',  label: '📦 other',    test: r => r.isdir !== '1' && !EXT.image.has(r.ext) && !EXT.video.has(r.ext) && !EXT.audio.has(r.ext) && !EXT.pdf.has(r.ext) && !EXT.text.has(r.ext) },
+];
+
+const activeFilters = new Set();
+
+function buildTypeFilters() {
+  const bar = document.getElementById('type-filters');
+  // Gather counts from current rows
+  const rows = Array.from(document.querySelectorAll('.result-row'));
+  if (!rows.length) { bar.classList.remove('visible'); return; }
+
+  const counts = {};
+  TYPE_CATS.forEach(cat => {
+    counts[cat.key] = rows.filter(r => cat.test(r.dataset)).length;
+  });
+
+  // Only show categories that have at least one result
+  const visible = TYPE_CATS.filter(c => counts[c.key] > 0);
+  if (visible.length <= 1) { bar.classList.remove('visible'); return; }
+
+  bar.innerHTML = visible.map(cat => `
+    <button class="tf-pill${activeFilters.has(cat.key) ? ' active' : ''}" data-cat="${cat.key}">
+      ${cat.label}<span class="tf-count">${counts[cat.key]}</span>
+    </button>`).join('');
+
+  bar.querySelectorAll('.tf-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const cat = pill.dataset.cat;
+      if (activeFilters.has(cat)) activeFilters.delete(cat);
+      else activeFilters.add(cat);
+      applyTypeFilter();
+      buildTypeFilters(); // refresh counts + active state
+    });
+  });
+
+  bar.classList.add('visible');
+}
+
+function applyTypeFilter() {
+  document.querySelectorAll('.result-row').forEach(row => {
+    if (!activeFilters.size) {
+      row.style.display = '';
+      return;
+    }
+    const match = TYPE_CATS.some(cat => activeFilters.has(cat.key) && cat.test(row.dataset));
+    row.style.display = match ? '' : 'none';
   });
 }
 
@@ -1283,6 +1365,8 @@ function showError(msg) {
 
 function renderResults(data, query) {
   errorBox.style.display = 'none';
+  activeFilters.clear();
+  document.getElementById('type-filters').classList.remove('visible');
   if (data.error) {
     showError(data.error);
     container.innerHTML = '';
@@ -1356,6 +1440,7 @@ function renderResults(data, query) {
     th.addEventListener('click', () => applySort(th.dataset.sort));
   });
   applySort(sortState.col, true); // re-apply current sort without toggling direction
+  buildTypeFilters();
 
   // Wire up action buttons — stopPropagation so row click doesn't also fire
   container.querySelectorAll('.act-zip').forEach(btn => {
