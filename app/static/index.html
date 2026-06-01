@@ -619,6 +619,8 @@
   }
   #preview-crumb .crumb-path { color: var(--text-muted); }
   #preview-crumb .crumb-name { color: var(--amber); }
+  #preview-crumb .crumb-seg { cursor: pointer; }
+  #preview-crumb .crumb-seg:hover { color: var(--amber); }
 
   .preview-hbtns { display: flex; gap: 6px; flex-shrink: 0; }
   #preview-dl-btn    { }
@@ -714,6 +716,34 @@
     white-space: pre;
     tab-size: 4;
   }
+
+  /* Folder browser */
+  .folder-browser { display: flex; flex-direction: column; width: 100%; align-self: stretch; overflow: hidden; }
+  .folder-browser-path {
+    padding: 8px 16px; font-size: 11px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); word-break: break-all; flex-shrink: 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  }
+  .folder-crumb-seg {
+    color: var(--text-muted); cursor: pointer; padding: 1px 3px; border-radius: 3px;
+    transition: color 0.1s;
+  }
+  .folder-crumb-seg:hover { color: var(--amber); }
+  .folder-crumb-seg.current { color: var(--text); cursor: default; }
+  .folder-crumb-sep { color: var(--text-dim); padding: 0 1px; }
+  .folder-entries { flex: 1; overflow-y: auto; }
+  .folder-entry {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 16px; cursor: pointer; border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+    transition: background 0.1s;
+  }
+  .folder-entry:hover { background: var(--hover); }
+  .folder-entry-icon { font-size: 16px; flex-shrink: 0; }
+  .folder-entry-name { flex: 1; font-size: 13px; color: var(--text); word-break: break-all; min-width: 0; }
+  .folder-entry:hover .folder-entry-name { color: var(--amber); }
+  .folder-entry-meta { font-size: 11px; color: var(--text-muted); flex-shrink: 0; white-space: nowrap; }
+  .folder-empty { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  .folder-error { padding: 40px; text-align: center; color: var(--red, #e05); font-size: 13px; }
 
   /* No-preview / info panel */
   .preview-info {
@@ -1684,11 +1714,35 @@ function openPreview(result, sourceEl) {
   previewReturnFocus = sourceEl || document.activeElement;
   previewCurrentPath = result.path;
 
-  // Header: crumb path
-  const dir = result.path.replace(/\/[^/]+$/, '');
-  previewCrumb.innerHTML =
-    `<span class="crumb-path">${escHtml(dir)}/</span>` +
-    `<span class="crumb-name">${escHtml(result.name || result.path.split('/').pop())}</span>`;
+  // Header: crumb path — clickable segments for directories, plain display for files
+  if (result.is_dir) {
+    previewCrumb.innerHTML = '';
+    const segments = result.path.split('/').filter(s => s !== '');
+    segments.forEach((seg, i) => {
+      const isLast = i === segments.length - 1;
+      if (i > 0) {
+        const sep = document.createElement('span');
+        sep.className = 'crumb-path';
+        sep.textContent = ' / ';
+        previewCrumb.appendChild(sep);
+      }
+      const el = document.createElement('span');
+      el.textContent = seg;
+      if (isLast) {
+        el.className = 'crumb-name';
+      } else {
+        el.className = 'crumb-path crumb-seg';
+        const segPath = '/' + segments.slice(0, i + 1).join('/');
+        el.addEventListener('click', () => openPreview({ path: segPath, name: seg, is_dir: true }, el));
+      }
+      previewCrumb.appendChild(el);
+    });
+  } else {
+    const dir = result.path.replace(/\/[^/]+$/, '');
+    previewCrumb.innerHTML =
+      `<span class="crumb-path">${escHtml(dir)}/</span>` +
+      `<span class="crumb-name">${escHtml(result.name || result.path.split('/').pop())}</span>`;
+  }
 
   // Download button — zip picker for directories, direct download for files
   if (result.is_dir) {
@@ -1709,6 +1763,7 @@ function openPreview(result, sourceEl) {
   const ptype = previewType(result.ext);
 
   setTimeout(async () => {
+    if (result.is_dir) { await renderFolder(result); return; }
     switch (ptype) {
       case 'image': renderImage(result); break;
       case 'video': renderVideo(result); break;
@@ -1861,6 +1916,57 @@ async function renderText(result) {
       setTimeout(() => { previewCopyBtn.textContent = '⎘ copy'; }, 1800);
     });
   };
+}
+
+async function renderFolder(result) {
+  let data;
+  try {
+    const r = await fetch(`/api/browse?path=${encodeURIComponent(result.path)}`);
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+  } catch (e) {
+    previewBody.innerHTML = `<div class="folder-error">Could not load folder: ${escHtml(e.message)}</div>`;
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'folder-browser';
+
+  const list = document.createElement('div');
+  list.className = 'folder-entries';
+
+  // ".." row — only when not at the data root
+  if (!data.is_root) {
+    const parentPath = data.path.replace(/\/[^/]+$/, '') || '/';
+    const parentName = parentPath.split('/').pop() || '/';
+    const upRow = document.createElement('div');
+    upRow.className = 'folder-entry';
+    upRow.innerHTML = `
+      <span class="folder-entry-icon">📁</span>
+      <span class="folder-entry-name">..</span>
+      <span class="folder-entry-meta"></span>`;
+    upRow.addEventListener('click', () => openPreview({ path: parentPath, name: parentName, is_dir: true }, upRow));
+    list.appendChild(upRow);
+  }
+
+  if (data.entries.length === 0 && data.is_root) {
+    list.innerHTML += `<div class="folder-empty">Empty folder</div>`;
+  } else {
+    data.entries.forEach(entry => {
+      const row = document.createElement('div');
+      row.className = 'folder-entry';
+      row.innerHTML = `
+        <span class="folder-entry-icon">${entry.is_dir ? '📁' : escHtml(entry.icon)}</span>
+        <span class="folder-entry-name">${escHtml(entry.name)}</span>
+        <span class="folder-entry-meta">${escHtml(entry.size || (entry.is_dir ? 'folder' : ''))}</span>`;
+      row.addEventListener('click', () => openPreview(entry, row));
+      list.appendChild(row);
+    });
+  }
+
+  wrap.appendChild(list);
+  previewBody.innerHTML = '';
+  previewBody.appendChild(wrap);
 }
 
 function renderInfo(result) {

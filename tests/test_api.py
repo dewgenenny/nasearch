@@ -113,6 +113,47 @@ def test_search_truncated_flag(client):
         assert data["truncated"] is True
 
 
+# ── Browse ───────────────────────────────────────────────────────────────────
+
+def test_browse_response_shape(client):
+    r = client.get("/api/browse", params={"path": "/data"})
+    assert r.status_code == 200
+    data = r.json()
+    assert "path" in data
+    assert "entries" in data
+    assert isinstance(data["entries"], list)
+
+
+def test_browse_entries_sorted_dirs_first(client):
+    r = client.get("/api/browse", params={"path": "/data"})
+    entries = r.json()["entries"]
+    saw_file = False
+    for e in entries:
+        if not e["is_dir"]:
+            saw_file = True
+        if saw_file:
+            assert not e["is_dir"], "Directories must appear before files"
+
+
+def test_browse_entry_fields(client):
+    r = client.get("/api/browse", params={"path": "/data"})
+    entries = r.json()["entries"]
+    assert entries, "Expected at least one entry under /data"
+    e = entries[0]
+    for field in ("path", "name", "dir", "ext", "icon", "is_dir"):
+        assert field in e
+
+
+def test_browse_path_traversal_blocked(client):
+    r = client.get("/api/browse", params={"path": "../../etc"})
+    assert r.status_code == 403
+
+
+def test_browse_non_directory_returns_400(client):
+    r = client.get("/api/browse", params={"path": "/data/.bashrc"})
+    assert r.status_code == 400
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 def test_settings_update_valid_interval(client):

@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git policy
+
+**Never commit or push without explicit approval from the user.** Always show what you intend to commit and wait for a clear go-ahead before running `git commit` or `git push`.
+
 ## What this project is
 
 **NASearch** — a lightweight NAS file search UI. FastAPI serves a REST API and a single-page frontend; `plocate` (`updatedb` + `locate`) does the actual indexing and searching. No Elasticsearch, no Node, no build step.

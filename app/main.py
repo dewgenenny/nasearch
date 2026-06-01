@@ -609,6 +609,44 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
         yield final
 
 
+@app.get("/api/browse")
+async def browse(path: str = Query(...)):
+    full_path = safe_resolve(path)
+    if not full_path:
+        return JSONResponse({"error": "Access denied"}, status_code=403)
+    if not full_path.exists():
+        return JSONResponse({"error": "Path not found"}, status_code=404)
+    if not full_path.is_dir():
+        return JSONResponse({"error": "Not a directory"}, status_code=400)
+
+    entries = []
+    try:
+        for child in sorted(full_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            is_dir = child.is_dir()
+            st = None
+            try:
+                st = child.stat()
+            except OSError:
+                pass
+            size_bytes = st.st_size if (st and not is_dir) else None
+            entries.append({
+                "path": str(child),
+                "name": child.name,
+                "dir": str(full_path),
+                "ext": "" if is_dir else child.suffix.lower().lstrip("."),
+                "icon": get_icon(str(child)),
+                "size": format_size_bytes(size_bytes) if size_bytes is not None else None,
+                "size_bytes": size_bytes,
+                "mtime": int(st.st_mtime) if st else None,
+                "is_dir": is_dir,
+            })
+    except PermissionError:
+        return JSONResponse({"error": "Permission denied"}, status_code=403)
+
+    is_root = full_path == Path(DATA_PATH).resolve()
+    return JSONResponse({"path": str(full_path), "is_root": is_root, "entries": entries})
+
+
 @app.get("/api/zipcheck")
 async def zip_check(path: str = Query(...)):
     """Return folder stats (file count, size) without downloading.
