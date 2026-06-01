@@ -7,6 +7,16 @@ with NOAUTH=true and /home/tom mounted as /data.
 import pytest
 
 
+@pytest.fixture(scope="session")
+def known_file(client):
+    """A file that exists under /data, discovered dynamically via browse."""
+    entries = client.get("/api/browse", params={"path": "/data"}).json()["entries"]
+    f = next((e for e in entries if not e["is_dir"]), None)
+    if f is None:
+        pytest.skip("No files found directly under /data")
+    return f
+
+
 # ── Homepage ──────────────────────────────────────────────────────────────────
 
 def test_homepage_returns_html(client):
@@ -66,20 +76,18 @@ def test_search_empty_query_returns_empty(client):
     assert data["total"] == 0
 
 
-def test_search_finds_known_file(client):
-    # requirements.txt is present in the repo (CI) and in /home/tom (local dev)
-    r = client.get("/api/search", params={"q": "requirements.txt"})
+def test_search_finds_known_file(client, known_file):
+    r = client.get("/api/search", params={"q": known_file["name"]})
     assert r.status_code == 200
     results = r.json()["results"]
     assert len(results) >= 1
-    paths = [item["path"] for item in results]
-    assert any("requirements.txt" in p for p in paths)
+    assert any(known_file["name"] in item["path"] for item in results)
 
 
-def test_search_result_fields(client):
-    r = client.get("/api/search", params={"q": "requirements.txt", "limit": 1})
+def test_search_result_fields(client, known_file):
+    r = client.get("/api/search", params={"q": known_file["name"], "limit": 1})
     results = r.json()["results"]
-    assert results, "Expected at least one result for requirements.txt"
+    assert results, f"Expected at least one result for {known_file['name']}"
     item = results[0]
     assert "path" in item
     assert "name" in item
@@ -150,7 +158,12 @@ def test_browse_path_traversal_blocked(client):
 
 
 def test_browse_non_directory_returns_400(client):
-    r = client.get("/api/browse", params={"path": "/data/.bashrc"})
+    # Find a real file under /data from the browse response, then try to browse it
+    entries = client.get("/api/browse", params={"path": "/data"}).json()["entries"]
+    file_entry = next((e for e in entries if not e["is_dir"]), None)
+    if file_entry is None:
+        pytest.skip("No files found under /data to test with")
+    r = client.get("/api/browse", params={"path": file_entry["path"]})
     assert r.status_code == 400
 
 
@@ -182,12 +195,9 @@ def test_settings_reset_to_zero(client):
 # ── File serving ──────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
-def sample_file_path(client):
-    """Return the container path of requirements.txt, or skip if not found."""
-    results = client.get("/api/search", params={"q": "requirements.txt", "limit": 1}).json()["results"]
-    if not results:
-        pytest.skip("requirements.txt not found in index")
-    return results[0]["path"]
+def sample_file_path(client, known_file):
+    """A real file path within /data, for testing file-serving endpoints."""
+    return known_file["path"]
 
 
 def test_file_serve_inline(client, sample_file_path):
