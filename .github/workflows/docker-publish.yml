@@ -18,6 +18,8 @@ jobs:
 
       - name: Start dev container
         run: docker compose -f docker-compose.dev.yml up -d --build
+        env:
+          DEV_DATA_PATH: ${{ github.workspace }}
 
       - name: Install test dependencies
         run: pip install -r requirements-dev.txt

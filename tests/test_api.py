@@ -67,19 +67,19 @@ def test_search_empty_query_returns_empty(client):
 
 
 def test_search_finds_known_file(client):
-    # .bashrc is always present in /home/tom → /data inside the container
-    r = client.get("/api/search", params={"q": ".bashrc"})
+    # requirements.txt is present in the repo (CI) and in /home/tom (local dev)
+    r = client.get("/api/search", params={"q": "requirements.txt"})
     assert r.status_code == 200
     results = r.json()["results"]
     assert len(results) >= 1
     paths = [item["path"] for item in results]
-    assert any(".bashrc" in p for p in paths)
+    assert any("requirements.txt" in p for p in paths)
 
 
 def test_search_result_fields(client):
-    r = client.get("/api/search", params={"q": ".bashrc", "limit": 1})
+    r = client.get("/api/search", params={"q": "requirements.txt", "limit": 1})
     results = r.json()["results"]
-    assert results, "Expected at least one result for .bashrc"
+    assert results, "Expected at least one result for requirements.txt"
     item = results[0]
     assert "path" in item
     assert "name" in item
@@ -141,21 +141,21 @@ def test_settings_reset_to_zero(client):
 # ── File serving ──────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
-def bashrc_path(client):
-    """Return the container path of .bashrc, or skip if not found."""
-    results = client.get("/api/search", params={"q": ".bashrc", "limit": 1}).json()["results"]
+def sample_file_path(client):
+    """Return the container path of requirements.txt, or skip if not found."""
+    results = client.get("/api/search", params={"q": "requirements.txt", "limit": 1}).json()["results"]
     if not results:
-        pytest.skip(".bashrc not found in index")
+        pytest.skip("requirements.txt not found in index")
     return results[0]["path"]
 
 
-def test_file_serve_inline(client, bashrc_path):
-    r = client.get("/api/file", params={"path": bashrc_path})
+def test_file_serve_inline(client, sample_file_path):
+    r = client.get("/api/file", params={"path": sample_file_path})
     assert r.status_code == 200
 
 
-def test_file_serve_download(client, bashrc_path):
-    r = client.get("/api/file", params={"path": bashrc_path, "dl": "1"})
+def test_file_serve_download(client, sample_file_path):
+    r = client.get("/api/file", params={"path": sample_file_path, "dl": "1"})
     assert r.status_code == 200
     assert "attachment" in r.headers.get("content-disposition", "")
 

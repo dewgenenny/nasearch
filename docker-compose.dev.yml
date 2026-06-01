@@ -15,7 +15,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /home/tom:/data:ro
+      - ${DEV_DATA_PATH:-/home/tom}:/data:ro
       - ./index-dev:/index
     environment:
       - LOCATE_DB=/index/files.db
