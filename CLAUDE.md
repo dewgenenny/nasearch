@@ -8,6 +8,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Designed to run on Unraid via Docker. The array is mounted read-only at `/data`; the index DB and settings live in a persistent volume at `/index`.
 
+## Dev workflow (required before pushing)
+
+With ~250 users on this project, all changes must pass the test suite before being committed.
+
+### One-time setup
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+### 1. Start the dev stack
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+This mounts `/home/tom` as `/data` (so indexing works without the NAS), uses `./index-dev/` for the DB, and sets `NOAUTH=true`. It always does a full image rebuild to match prod conditions. Port 8000, same as prod.
+
+### 2. Run the tests
+
+```bash
+pytest
+```
+
+The test suite starts the index automatically if needed and waits for it to complete. All tests must pass before pushing. To target a different URL: `NASEARCH_URL=http://localhost:8000 pytest`.
+
+### 3. Tear down
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+> **Never push if tests fail.** The `index-dev/` directory is git-ignored; don't commit it.
+
+---
+
 ## Running locally (Docker)
 
 ```bash

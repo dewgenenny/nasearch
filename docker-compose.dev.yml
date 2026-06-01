@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Standalone dev compose — as close to prod as possible.
+# Indexes /home/tom instead of /mnt/user, no auth required.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d --build
+#   docker compose -f docker-compose.dev.yml down
+
+services:
+  nasearch:
+    build: .
+    container_name: nasearch-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - /home/tom:/data:ro
+      - ./index-dev:/index
+    environment:
+      - LOCATE_DB=/index/files.db
+      - DATA_PATH=/data
+      - PRUNE_PATHS=
+      - MAX_RESULTS=500
+      - NOAUTH=true

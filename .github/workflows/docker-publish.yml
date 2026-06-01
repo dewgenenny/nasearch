@@ -11,7 +11,26 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start dev container
+        run: docker compose -f docker-compose.dev.yml up -d --build
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -v
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
