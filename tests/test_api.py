@@ -269,6 +269,63 @@ def test_no_redirect_to_login_in_noauth_mode(client):
     assert r.status_code == 200
 
 
+# ── Enrich ───────────────────────────────────────────────────────────────────
+
+def test_enrich_returns_expected_fields(client, known_file):
+    r = client.post("/api/enrich", json={"paths": [known_file["path"]]})
+    assert r.status_code == 200
+    data = r.json()
+    assert known_file["path"] in data
+    entry = data[known_file["path"]]
+    for field in ("is_dir", "ext", "icon", "size", "size_bytes", "mtime"):
+        assert field in entry, f"Missing field '{field}' in enrich response"
+    assert entry["is_dir"] is False
+    assert isinstance(entry["mtime"], int)
+
+
+def test_enrich_path_traversal_blocked(client):
+    r = client.post("/api/enrich", json={"paths": ["../../etc/passwd"]})
+    assert r.status_code == 200
+    # Traversal paths are silently dropped — the response dict must be empty
+    assert r.json() == {}
+
+
+def test_enrich_non_list_body_returns_400(client):
+    r = client.post("/api/enrich", json={"paths": "not-a-list"})
+    assert r.status_code == 400
+
+
+def test_enrich_non_string_paths_skipped(client, known_file):
+    # Non-string entries are silently skipped; valid ones still resolve
+    r = client.post("/api/enrich", json={"paths": [123, None, known_file["path"]]})
+    assert r.status_code == 200
+    data = r.json()
+    assert known_file["path"] in data
+
+
+def test_enrich_honours_max_results_cap(client):
+    # Build a list larger than MAX_RESULTS (default 500); endpoint must not blow up
+    big_list = [f"/data/nonexistent_{i}.txt" for i in range(600)]
+    r = client.post("/api/enrich", json={"paths": big_list})
+    assert r.status_code == 200
+    # All paths are nonexistent so they get omitted from the result, but the
+    # call must complete without error
+    assert isinstance(r.json(), dict)
+
+
+def test_enrich_missing_file_omitted(client):
+    r = client.post("/api/enrich", json={"paths": ["/data/__definitely_does_not_exist__.xyz"]})
+    assert r.status_code == 200
+    # Nonexistent paths are omitted rather than causing a 500
+    assert r.json() == {}
+
+
+def test_enrich_empty_list_returns_empty(client):
+    r = client.post("/api/enrich", json={"paths": []})
+    assert r.status_code == 200
+    assert r.json() == {}
+
+
 # ── Unknown routes ────────────────────────────────────────────────────────────
 
 def test_unknown_api_route_returns_404(client):

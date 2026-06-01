@@ -1175,6 +1175,50 @@ let allResults     = [];   // raw from API, never mutated
 let displayResults = [];   // after sort + type filter
 let _lastQuery     = '';
 
+// ── Lazy enrichment ───────────────────────────────────────────────────────────
+const enrichedPaths = new Set();
+
+async function enrichBatch(paths) {
+  const toEnrich = paths.filter(p => !enrichedPaths.has(p));
+  if (!toEnrich.length) return;
+
+  let data;
+  try {
+    const res = await postWithCsrf('/api/enrich', { paths: toEnrich });
+    if (!res.ok) return;
+    data = await res.json();
+  } catch { return; }
+
+  // Update allResults objects so sort/filter work on fresh data
+  for (const r of allResults) {
+    const info = data[r.path];
+    if (!info) continue;
+    Object.assign(r, info);
+    enrichedPaths.add(r.path);
+  }
+
+  // Patch rendered rows in place
+  for (const [path, info] of Object.entries(data)) {
+    const row = document.querySelector(`tr[data-path="${CSS.escape(path)}"]`);
+    if (!row) continue;
+    row.dataset.sizeBytes = info.size_bytes ?? '';
+    row.dataset.mtime     = info.mtime      ?? '';
+    row.dataset.isdir     = info.is_dir ? '1' : '';
+    row.dataset.ext       = info.ext ?? row.dataset.ext;
+    const sizeCell  = row.querySelector('.col-size');
+    const mtimeCell = row.querySelector('.col-mtime');
+    const iconCell  = row.querySelector('.col-icon');
+    const nameCell  = row.querySelector('.col-name');
+    if (sizeCell)  sizeCell.textContent  = info.size          || '—';
+    if (mtimeCell) mtimeCell.textContent = info.mtime ? fmtMtime(info.mtime) : '—';
+    if (iconCell)  iconCell.textContent  = info.icon          || row.querySelector('.col-icon').textContent;
+    if (info.is_dir) {
+      row.classList.add('previewable');
+      if (nameCell) nameCell.style.color = '';
+    }
+  }
+}
+
 // ── Infinite scroll ───────────────────────────────────────────────────────────
 const IS = { BATCH: 100, rendered: 0, observer: null };
 
@@ -1215,6 +1259,7 @@ function isAppend() {
   tbody.insertAdjacentHTML('beforeend', slice.map(r => makeRow(r, _lastQuery)).join(''));
   IS.rendered += slice.length;
   if (IS.rendered >= displayResults.length) sentinel.style.display = 'none';
+  enrichBatch(slice.map(r => r.path));
 }
 
 function isInit() {
@@ -1281,9 +1326,9 @@ function isMount() {
     </table>
     <div id="is-sentinel" style="height:1px"></div>`;
 
-  document.getElementById('is-table').querySelector('thead').addEventListener('click', e => {
+  document.getElementById('is-table').querySelector('thead').addEventListener('click', async e => {
     const th = e.target.closest('th.sortable');
-    if (th) applySort(th.dataset.sort);
+    if (th) await applySort(th.dataset.sort);
   });
 
   isAppend();
@@ -1294,11 +1339,16 @@ function isMount() {
 // ── Sort ──────────────────────────────────────────────────────────────────────
 const sortState = { col: null, dir: 1 };
 
-function applySort(col, restore = false) {
+async function applySort(col, restore = false) {
   if (!col) return;
   if (!restore) {
     if (sortState.col === col) sortState.dir *= -1;
     else { sortState.col = col; sortState.dir = (col === 'size' || col === 'mtime') ? -1 : 1; }
+  }
+  // Enrich everything before sorting by a metadata column
+  if (!restore && (col === 'size' || col === 'mtime')) {
+    const unenriched = allResults.map(r => r.path).filter(p => !enrichedPaths.has(p));
+    if (unenriched.length) await enrichBatch(unenriched);
   }
   const d = sortState.dir;
   displayResults.sort((a, b) => {
@@ -1682,6 +1732,7 @@ function showError(msg) {
 function renderResults(data, query) {
   errorBox.style.display = 'none';
   activeFilters.clear();
+  enrichedPaths.clear();
   document.getElementById('type-filters').classList.remove('visible');
   truncWarn.style.display = 'none';
 

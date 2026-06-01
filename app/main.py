@@ -439,24 +439,16 @@ async def search(
     results = []
     for path in lines:
         p = Path(path)
-        st = None
-        is_dir = False
-        try:
-            st = p.stat()
-            is_dir = stat_mod.S_ISDIR(st.st_mode)
-        except OSError:
-            pass
-        size_bytes = st.st_size if (st and not is_dir) else None
         results.append({
             "path": path,
             "name": p.name,
             "dir": str(p.parent),
-            "ext": "" if is_dir else p.suffix.lower().lstrip("."),
+            "ext": p.suffix.lower().lstrip("."),
             "icon": get_icon(path),
-            "size": format_size_bytes(size_bytes) if size_bytes is not None else None,
-            "size_bytes": size_bytes,
-            "mtime": int(st.st_mtime) if st else None,
-            "is_dir": is_dir,
+            "size": None,
+            "size_bytes": None,
+            "mtime": None,
+            "is_dir": False,  # filled by /api/enrich
         })
 
     return JSONResponse({"results": results, "total": len(results), "truncated": truncated})
@@ -478,6 +470,54 @@ async def status(request: Request):
         "auth_enabled": bool(_auth_enabled),
         "csrf_token": csrf,
     }
+
+
+@app.post("/api/enrich")
+async def enrich_paths(request: Request, body: dict):
+    """Stat a batch of paths and return is_dir / size / mtime.
+
+    Called by the frontend after the initial search results render, so
+    the search response itself never blocks on filesystem metadata.
+    Each path is validated against DATA_PATH before being stat'd.
+    """
+    if not _csrf_ok(request):
+        return JSONResponse({"error": "CSRF token missing or invalid"}, status_code=403)
+
+    raw = body.get("paths", [])
+    if not isinstance(raw, list):
+        return JSONResponse({"error": "paths must be a list"}, status_code=400)
+
+    # Validate and cap — reuse safe_resolve so traversal is impossible
+    valid: list[tuple[str, Path]] = []
+    for p in raw[:MAX_RESULTS]:
+        if not isinstance(p, str):
+            continue
+        full = safe_resolve(p)
+        if full:
+            valid.append((p, full))
+
+    def stat_all() -> dict:
+        out: dict = {}
+        for orig, full in valid:
+            try:
+                st = full.stat()
+                is_dir = stat_mod.S_ISDIR(st.st_mode)
+                size_bytes = st.st_size if not is_dir else None
+                out[orig] = {
+                    "is_dir":     is_dir,
+                    "ext":        "" if is_dir else full.suffix.lower().lstrip("."),
+                    "icon":       get_icon(str(full)),
+                    "size":       format_size_bytes(size_bytes) if size_bytes is not None else None,
+                    "size_bytes": size_bytes,
+                    "mtime":      int(st.st_mtime),
+                }
+            except OSError:
+                pass  # file disappeared between locate and stat — just omit it
+        return out
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, stat_all)
+    return JSONResponse(result)
 
 
 @app.post("/api/reindex")
