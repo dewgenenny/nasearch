@@ -1,5 +1,8 @@
 # NASearch
 
+[![Tests](https://github.com/dewgenenny/nasearch/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/dewgenenny/nasearch/actions/workflows/docker-publish.yml)
+[![Image](https://ghcr-badge.egpl.dev/dewgenenny/nasearch/latest_tag?trim=major&label=image&color=blue)](https://github.com/dewgenenny/nasearch/pkgs/container/nasearch)
+
 Lightweight file search for self-hosted storage. FastAPI + plocate, no Elasticsearch, no bloat.
 
 Point it at one or more directories, let it index, then search from a browser.
