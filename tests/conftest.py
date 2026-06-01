@@ -38,6 +38,13 @@ def wait_for_index(client: httpx.Client, timeout: int = 120) -> None:
     pytest.fail(f"Index was not built within {timeout}s")
 
 
+@pytest.fixture
+def idle_client(client):
+    """Client fixture that waits for any running reindex to complete first."""
+    wait_for_index(client)
+    return client
+
+
 @pytest.fixture(scope="session")
 def client():
     wait_for_server(BASE_URL)

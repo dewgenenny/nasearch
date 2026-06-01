@@ -169,26 +169,26 @@ def test_browse_non_directory_returns_400(client):
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-def test_settings_update_valid_interval(client):
-    r = client.post("/api/settings", json={"interval_hours": 6})
+def test_settings_update_valid_interval(idle_client):
+    r = idle_client.post("/api/settings", json={"interval_hours": 6})
     assert r.status_code == 200
     assert r.json()["settings"]["interval_hours"] == 6
 
 
-def test_settings_persisted_to_status(client):
-    client.post("/api/settings", json={"interval_hours": 12})
-    data = client.get("/api/status").json()
+def test_settings_persisted_to_status(idle_client):
+    idle_client.post("/api/settings", json={"interval_hours": 12})
+    data = idle_client.get("/api/status").json()
     assert data["interval_hours"] == 12
 
 
-def test_settings_rejects_invalid_interval(client):
-    r = client.post("/api/settings", json={"interval_hours": 99})
+def test_settings_rejects_invalid_interval(idle_client):
+    r = idle_client.post("/api/settings", json={"interval_hours": 99})
     assert r.status_code == 400
 
 
-def test_settings_reset_to_zero(client):
+def test_settings_reset_to_zero(idle_client):
     # Leave the container in a clean state (manual-only mode)
-    r = client.post("/api/settings", json={"interval_hours": 0})
+    r = idle_client.post("/api/settings", json={"interval_hours": 0})
     assert r.status_code == 200
 
 
