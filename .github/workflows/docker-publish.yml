@@ -3,6 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'Dockerfile'
+      - 'docker-compose*.yml'
+      - 'requirements*.txt'
+      - '.github/workflows/**'
   release:
     types: [published]
 
