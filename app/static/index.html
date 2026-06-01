@@ -6,8 +6,35 @@
 <title>NASearch</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='38' cy='38' r='28' fill='none' stroke='%23a78bfa' stroke-width='12'/%3E%3Cline x1='58' y1='58' x2='88' y2='88' stroke='%23a78bfa' stroke-width='12' stroke-linecap='round'/%3E%3C/svg%3E">
 <script>
-  /* Apply saved theme before CSS renders to prevent flash */
-  (function(){ var t = localStorage.getItem('nasearch_theme'); if(t) document.documentElement.setAttribute('data-theme', t); })();
+/* Apply saved theme/palette/scanlines before CSS renders to prevent flash */
+(function(){
+  function h2r(h){var m=/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h);return m?[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]:null;}
+  function r2h(c){return'#'+c.map(function(v){return Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0');}).join('');}
+  function bl(a,b,t){return a.map(function(v,i){return v*(1-t)+b[i]*t;});}
+  var t=localStorage.getItem('nasearch_theme')||'dark';
+  document.documentElement.setAttribute('data-theme',t);
+  if(localStorage.getItem('nasearch_scanlines')==='off')
+    document.documentElement.setAttribute('data-scanlines','off');
+  try{
+    var p=JSON.parse(localStorage.getItem('nasearch_palette_'+t)||'null');
+    if(p){
+      var bg=h2r(p.bg),tx=h2r(p.text),ac=h2r(p.accent);
+      if(bg&&tx&&ac){
+        var lum=bg[0]*.299+bg[1]*.587+bg[2]*.114,dk=lum<128,st=dk?[255,255,255]:[0,0,0],sm=dk?.04:.06;
+        var vars=[
+          '--bg:'+r2h(bg),'--bg2:'+r2h(bl(bg,st,sm)),'--bg3:'+r2h(bl(bg,st,sm*2)),
+          '--bg4:'+r2h(bl(bg,st,sm*3)),'--border:'+r2h(bl(bg,st,sm*4)),'--border-hi:'+r2h(bl(bg,st,sm*6)),
+          '--accent:'+r2h(ac),'--accent-dim:'+r2h(bl(ac,dk?[0,0,0]:[255,255,255],.25)),
+          '--accent-glow:rgba('+ac.join(',')+',0.07)','--accent-glow2:rgba('+ac.join(',')+',0.12)',
+          '--text:'+r2h(tx),'--text-dim:'+r2h(bl(bg,tx,.70)),'--text-muted:'+r2h(bl(bg,tx,.50)),
+          '--code-bg:'+r2h(bl(bg,dk?[0,0,0]:[255,255,255],.03)),'--code-text:'+r2h(bl(bg,tx,.65)),
+          '--video-bg:#000','--green:'+(dk?'#00e676':'#1a7a40'),'--red:'+(dk?'#ff4444':'#cc2222'),'--blue:'+(dk?'#40c4ff':'#1a5fcc'),
+        ];
+        document.head.insertAdjacentHTML('beforeend','<style id="custom-palette">:root{'+vars.join(';')+'}</style>');
+      }
+    }
+  }catch(e){}
+})();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
@@ -28,8 +55,8 @@
     --red:          #ff4444;
     --blue:         #40c4ff;
     --text:         #d8d8d8;
-    --text-dim:     #606060;
-    --text-muted:   #383838;
+    --text-dim:     #b8b8b8;
+    --text-muted:   #888888;
     --code-bg:      #060606;
     --code-text:    #c0c0c0;
     --video-bg:     #000000;
@@ -83,8 +110,8 @@
     --red:          #ff5252;
     --blue:         #82b1ff;
     --text:         #e8e0ff;
-    --text-dim:     #9080c0;
-    --text-muted:   #483d78;
+    --text-dim:     #c8b8f0;
+    --text-muted:   #9880c8;
     --code-bg:      #0a0818;
     --code-text:    #d0c8f8;
     --video-bg:     #000000;
@@ -106,8 +133,8 @@
     --red:          #f87171;
     --blue:         #a78bfa;
     --text:         #c8d3e8;
-    --text-dim:     #6b7a9c;
-    --text-muted:   #3a4260;
+    --text-dim:     #b0bcd8;
+    --text-muted:   #8090b0;
     --code-bg:      #090d16;
     --code-text:    #b8c4d8;
     --video-bg:     #000000;
@@ -142,7 +169,8 @@
     pointer-events: none;
     z-index: 9998;
   }
-  [data-theme="light"] body::after { display: none; }
+  [data-theme="light"] body::after,
+  [data-scanlines="off"] body::after { display: none; }
 
   /* ── Buttons ── */
   .btn {
@@ -267,6 +295,85 @@
   .reindex-col { display: flex; flex-direction: column; gap: 8px; }
   #reindex-btn  { padding: 8px 20px; font-size: 12px; }
   #reindex-msg  { font-size: 11px; color: var(--text-dim); min-height: 15px; letter-spacing: 0.3px; }
+
+  /* Colour palette pickers */
+  .palette-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .palette-swatch-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .palette-swatch-label {
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .pal-swatch {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 32px;
+    height: 22px;
+    padding: 2px;
+    border: 1px solid var(--border-hi);
+    background: none;
+    cursor: pointer;
+  }
+  .pal-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+  .pal-swatch::-webkit-color-swatch { border: none; }
+  .pal-swatch::-moz-color-swatch { border: none; }
+  .pal-swatch:hover { border-color: var(--accent); }
+
+  /* Scanline toggle switch */
+  .scan-toggle {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .scan-toggle input { display: none; }
+  .scan-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border-hi);
+    border-radius: 10px;
+    transition: background 0.2s;
+  }
+  .scan-slider::before {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: var(--bg4);
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .scan-toggle input:checked + .scan-slider { background: var(--accent); }
+  .scan-toggle input:checked + .scan-slider::before { transform: translateX(16px); background: var(--bg2); }
+
+  .pal-extra-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .pal-reset-btn {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 9px;
+    letter-spacing: 1px;
+    align-self: flex-end;
+  }
 
   /* ── Main content ── */
   main { flex: 1; padding: 24px 28px 0; max-width: 1200px; width: 100%; margin: 0 auto; }
@@ -453,9 +560,9 @@
     color: var(--text-muted);
     user-select: none;
   }
-  .state-glyph  { font-size: 36px; opacity: 0.3; font-family: var(--mono); }
+  .state-glyph  { font-size: 36px; font-family: var(--mono); }
   .state-title  { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; }
-  .state-sub    { font-size: 11px; opacity: 0.55; }
+  .state-sub    { font-size: 11px; color: var(--text-muted); opacity: 0.7; }
   .error-box {
     background: rgba(255,68,68,0.05);
     border: 1px solid rgba(255,68,68,0.2);
@@ -960,6 +1067,30 @@
         <button class="ivl-btn theme-btn" data-theme="light">Light</button>
         <button class="ivl-btn theme-btn" data-theme="purple">Purple</button>
         <button class="ivl-btn theme-btn" data-theme="slate">Slate</button>
+      </div>
+      <div class="palette-row">
+        <div class="palette-swatch-wrap">
+          <span class="palette-swatch-label">bg</span>
+          <input type="color" id="pal-bg" class="pal-swatch" title="Background colour">
+        </div>
+        <div class="palette-swatch-wrap">
+          <span class="palette-swatch-label">text</span>
+          <input type="color" id="pal-text" class="pal-swatch" title="Text colour">
+        </div>
+        <div class="palette-swatch-wrap">
+          <span class="palette-swatch-label">accent</span>
+          <input type="color" id="pal-accent" class="pal-swatch" title="Accent colour">
+        </div>
+      </div>
+      <div class="pal-extra-row">
+        <div class="palette-swatch-wrap">
+          <span class="palette-swatch-label">scanlines</span>
+          <label class="scan-toggle" title="Toggle scanline overlay">
+            <input type="checkbox" id="scanline-chk">
+            <span class="scan-slider"></span>
+          </label>
+        </div>
+        <button class="btn pal-reset-btn" id="pal-reset" title="Reset colours to theme defaults">↺ reset</button>
       </div>
     </div>
 
@@ -1637,18 +1768,105 @@ settingsToggle.addEventListener('click', () => {
   settingsToggle.classList.toggle('active', open);
 });
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
+// ── Theme & palette ───────────────────────────────────────────────────────────
+const PRESET_PALETTES = {
+  dark:   { bg: '#0a0a0a', text: '#d8d8d8', accent: '#ffb300' },
+  light:  { bg: '#f5f5f0', text: '#1a1a18', accent: '#b06000' },
+  purple: { bg: '#0d0a1a', text: '#e8e0ff', accent: '#b388ff' },
+  slate:  { bg: '#0f1117', text: '#c8d3e8', accent: '#38bdf8' },
+};
+
+// Shared colour math (mirrored in the anti-flash script and login page)
+function _h2r(h){const m=/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h);return m?[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]:null;}
+function _r2h(c){return'#'+c.map(v=>Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0')).join('');}
+function _bl(a,b,t){return a.map((v,i)=>v*(1-t)+b[i]*t);}
+
+function buildPaletteVars(bgHex, textHex, accentHex) {
+  const bg=_h2r(bgHex), tx=_h2r(textHex), ac=_h2r(accentHex);
+  if (!bg||!tx||!ac) return '';
+  const lum=bg[0]*.299+bg[1]*.587+bg[2]*.114, dk=lum<128;
+  const st=dk?[255,255,255]:[0,0,0], sm=dk?.04:.06;
+  return [
+    `--bg:${_r2h(bg)}`,`--bg2:${_r2h(_bl(bg,st,sm))}`,`--bg3:${_r2h(_bl(bg,st,sm*2))}`,
+    `--bg4:${_r2h(_bl(bg,st,sm*3))}`,`--border:${_r2h(_bl(bg,st,sm*4))}`,`--border-hi:${_r2h(_bl(bg,st,sm*6))}`,
+    `--accent:${_r2h(ac)}`,`--accent-dim:${_r2h(_bl(ac,dk?[0,0,0]:[255,255,255],.25))}`,
+    `--accent-glow:rgba(${ac.join(',')},0.07)`,`--accent-glow2:rgba(${ac.join(',')},0.12)`,
+    `--text:${_r2h(tx)}`,`--text-dim:${_r2h(_bl(bg,tx,.70))}`,`--text-muted:${_r2h(_bl(bg,tx,.50))}`,
+    `--code-bg:${_r2h(_bl(bg,dk?[0,0,0]:[255,255,255],.03))}`,`--code-text:${_r2h(_bl(bg,tx,.65))}`,
+    `--video-bg:#000`,`--green:${dk?'#00e676':'#1a7a40'}`,`--red:${dk?'#ff4444':'#cc2222'}`,`--blue:${dk?'#40c4ff':'#1a5fcc'}`,
+  ].join(';');
+}
+
+function syncPickers(bgHex, textHex, accentHex) {
+  document.getElementById('pal-bg').value     = bgHex;
+  document.getElementById('pal-text').value   = textHex;
+  document.getElementById('pal-accent').value = accentHex;
+}
+
+function _paletteKey(theme) { return 'nasearch_palette_' + theme; }
+
+function applyPaletteOverride(bgHex, textHex, accentHex) {
+  const theme = localStorage.getItem('nasearch_theme') || 'dark';
+  let el = document.getElementById('custom-palette');
+  if (!el) { el = document.createElement('style'); el.id = 'custom-palette'; document.head.appendChild(el); }
+  el.textContent = `:root{${buildPaletteVars(bgHex, textHex, accentHex)}}`;
+  localStorage.setItem(_paletteKey(theme), JSON.stringify({ bg: bgHex, text: textHex, accent: accentHex }));
+}
+
 function setTheme(name) {
+  // Remove any active palette override
+  const el = document.getElementById('custom-palette');
+  if (el) el.remove();
+
   document.documentElement.setAttribute('data-theme', name);
   localStorage.setItem('nasearch_theme', name);
   document.querySelectorAll('.theme-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.theme === name));
+
+  // Load saved overrides for this theme, falling back to preset defaults
+  const saved = JSON.parse(localStorage.getItem(_paletteKey(name)) || 'null');
+  const preset = PRESET_PALETTES[name];
+  const pal = saved || preset;
+  if (pal) {
+    syncPickers(pal.bg, pal.text, pal.accent);
+    if (saved) applyPaletteOverride(saved.bg, saved.text, saved.accent);
+  }
 }
 
 document.querySelectorAll('.theme-btn').forEach(btn =>
   btn.addEventListener('click', () => setTheme(btn.dataset.theme)));
 
-// Mark the current active theme button on load
+['pal-bg', 'pal-text', 'pal-accent'].forEach(id =>
+  document.getElementById(id).addEventListener('input', () =>
+    applyPaletteOverride(
+      document.getElementById('pal-bg').value,
+      document.getElementById('pal-text').value,
+      document.getElementById('pal-accent').value,
+    )));
+
+document.getElementById('pal-reset').addEventListener('click', () => {
+  const theme = localStorage.getItem('nasearch_theme') || 'dark';
+  localStorage.removeItem(_paletteKey(theme));
+  const el = document.getElementById('custom-palette');
+  if (el) el.remove();
+  const preset = PRESET_PALETTES[theme];
+  if (preset) syncPickers(preset.bg, preset.text, preset.accent);
+});
+
+// ── Scanlines toggle ──────────────────────────────────────────────────────────
+const scanlineChk = document.getElementById('scanline-chk');
+
+function setScanlines(on) {
+  document.documentElement.setAttribute('data-scanlines', on ? 'on' : 'off');
+  localStorage.setItem('nasearch_scanlines', on ? 'on' : 'off');
+  scanlineChk.checked = on;
+}
+
+scanlineChk.addEventListener('change', () => setScanlines(scanlineChk.checked));
+
+// Initialise on load
+const savedScanlines = localStorage.getItem('nasearch_scanlines');
+setScanlines(savedScanlines !== 'off');   // default on
 setTheme(localStorage.getItem('nasearch_theme') || 'dark');
 
 logoutBtn.addEventListener('click', async () => {
@@ -1656,7 +1874,7 @@ logoutBtn.addEventListener('click', async () => {
   window.location.href = '/login';
 });
 
-document.querySelectorAll('.ivl-btn').forEach(btn => {
+document.querySelectorAll('.ivl-btn[data-hours]').forEach(btn => {
   btn.addEventListener('click', async () => {
     const hours = parseInt(btn.dataset.hours, 10);
     await postWithCsrf('/api/settings', { interval_hours: hours });

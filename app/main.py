@@ -319,21 +319,50 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
-    :root{{--bg:#0a0a0a;--bg2:#111;--border:#252525;--border-hi:#333;--amber:#ffb300;--amber-glow:rgba(255,179,0,.07);--text:#d8d8d8;--text-muted:#383838;--mono:'IBM Plex Mono',monospace;}}
-    *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0;}}
-    html,body{{height:100%;background:var(--bg);color:var(--text);font-family:var(--mono);display:flex;align-items:center;justify-content:center;}}
-    .card{{width:100%;max-width:340px;padding:0 24px;}}
-    .logo{{font-size:22px;font-weight:500;color:var(--amber);letter-spacing:2px;margin-bottom:5px;}}
-    .logo::before{{content:'> ';color:var(--text-muted);font-weight:300;}}
-    .sub{{font-size:10px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:40px;}}
-    .field{{margin-bottom:14px;}}
-    label{{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;}}
-    input{{width:100%;background:var(--bg2);border:1px solid var(--border-hi);color:var(--text);font-family:var(--mono);font-size:14px;padding:10px 14px;outline:none;}}
-    input:focus{{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber);}}
-    button{{width:100%;margin-top:8px;background:none;border:1px solid var(--amber);color:var(--amber);font-family:var(--mono);font-size:12px;padding:11px;cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;transition:background .12s;}}
-    button:hover{{background:var(--amber-glow);}}
-    .err{{margin-top:18px;font-size:11px;color:#ff4444;letter-spacing:.5px;text-align:center;}}
+    :root{--bg:#0a0a0a;--bg2:#111;--border:#252525;--border-hi:#333;--amber:#ffb300;--amber-glow:rgba(255,179,0,.07);--text:#d8d8d8;--text-muted:#383838;--mono:'IBM Plex Mono',monospace;}
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--mono);display:flex;align-items:center;justify-content:center;}
+    .card{width:100%;max-width:340px;padding:0 24px;}
+    .logo{font-size:22px;font-weight:500;color:var(--amber);letter-spacing:2px;margin-bottom:5px;}
+    .logo::before{content:'> ';color:var(--text-muted);font-weight:300;}
+    .sub{font-size:10px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:40px;}
+    .field{margin-bottom:14px;}
+    label{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;}
+    input{width:100%;background:var(--bg2);border:1px solid var(--border-hi);color:var(--text);font-family:var(--mono);font-size:14px;padding:10px 14px;outline:none;}
+    input:focus{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber);}
+    button{width:100%;margin-top:8px;background:none;border:1px solid var(--amber);color:var(--amber);font-family:var(--mono);font-size:12px;padding:11px;cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;transition:background .12s;}
+    button:hover{background:var(--amber-glow);}
+    .err{margin-top:18px;font-size:11px;color:#ff4444;letter-spacing:.5px;text-align:center;}
   </style>
+  <script>
+  /* Apply saved colour palette before first paint */
+  (function(){
+    try {
+      var t=localStorage.getItem('nasearch_theme');
+      if(!t||t==='dark') return;
+      function h2r(h){var m=/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h);return m?[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]:null;}
+      function r2h(c){return'#'+c.map(function(v){return Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0');}).join('');}
+      function bl(a,b,t){return a.map(function(v,i){return v*(1-t)+b[i]*t;});}
+      var bg,tx,ac;
+      var saved=JSON.parse(localStorage.getItem('nasearch_palette_'+t)||'null');
+      if(saved){
+        bg=h2r(saved.bg);tx=h2r(saved.text);ac=h2r(saved.accent);
+      } else {
+        var PR={light:['#f5f5f0','#1a1a18','#b06000'],purple:['#0d0a1a','#e8e0ff','#b388ff'],slate:['#0f1117','#c8d3e8','#38bdf8']};
+        if(!PR[t]) return;
+        bg=h2r(PR[t][0]);tx=h2r(PR[t][1]);ac=h2r(PR[t][2]);
+      }
+      if(!bg||!tx||!ac) return;
+      var lum=bg[0]*.299+bg[1]*.587+bg[2]*.114,dk=lum<128;
+      var st=dk?[255,255,255]:[0,0,0],sm=dk?.04:.06;
+      var v='--bg:'+r2h(bg)+';--bg2:'+r2h(bl(bg,st,sm))+';--border:'+r2h(bl(bg,st,sm*4))
+         +';--border-hi:'+r2h(bl(bg,st,sm*6))+';--amber:'+r2h(ac)
+         +';--amber-glow:rgba('+ac.join(',')+',0.07)'
+         +';--text:'+r2h(tx)+';--text-muted:'+r2h(bl(bg,tx,.50));
+      document.head.insertAdjacentHTML('beforeend','<style>:root{'+v+'}</style>');
+    } catch(e){}
+  })();
+  </script>
 </head>
 <body>
   <div class="card">
@@ -357,14 +386,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
 @app.get("/login")
 async def login_page():
-    return HTMLResponse(_LOGIN_HTML.format(error=""))
+    return HTMLResponse(_LOGIN_HTML.replace("{error}", ""))
 
 @app.post("/login")
 async def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
     ip = request.client.host if request.client else "unknown"
     if not _rate_limit_ok(ip):
         return HTMLResponse(
-            _LOGIN_HTML.format(error='<p class="err">too many attempts — try again in 15 minutes</p>'),
+            _LOGIN_HTML.replace("{error}", '<p class="err">too many attempts — try again in 15 minutes</p>'),
             status_code=429,
         )
     if _check_credentials(username, password):
@@ -376,7 +405,7 @@ async def login_submit(request: Request, username: str = Form(""), password: str
         return resp
     _rate_limit_record(ip)
     return HTMLResponse(
-        _LOGIN_HTML.format(error='<p class="err">invalid credentials</p>'),
+        _LOGIN_HTML.replace("{error}", '<p class="err">invalid credentials</p>'),
         status_code=401,
     )
 
@@ -536,8 +565,12 @@ async def update_settings(request: Request, body: dict):
     if not _csrf_ok(request):
         return JSONResponse({"error": "CSRF token missing or invalid"}, status_code=403)
     settings = load_settings()
-    if "interval_hours" in body:
-        val = int(body["interval_hours"])
+    raw = body.get("interval_hours")
+    if raw is not None:
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Invalid interval"}, status_code=400)
         if val not in [0, 1, 6, 12, 24, 48, 168]:
             return JSONResponse({"error": "Invalid interval"}, status_code=400)
         settings["interval_hours"] = val
