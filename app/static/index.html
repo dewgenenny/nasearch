@@ -818,6 +818,35 @@
   .preview-no-prev   { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; }
   .preview-info .btn { margin-top: 4px; padding: 8px 20px; font-size: 12px; }
 
+  /* STL 3-D viewer */
+  #preview-body.stl-mode { padding: 0; overflow: hidden; display: block; }
+  .preview-stl {
+    width: 100%; height: 100%;
+    position: relative;
+    background: #04040c;
+  }
+  .stl-canvas {
+    width: 100%; height: 100%;
+    display: block;
+    cursor: grab;
+    outline: none;
+    touch-action: none;
+  }
+  .stl-canvas:active { cursor: grabbing; }
+  .stl-meta {
+    position: absolute; bottom: 10px; left: 12px;
+    font-size: 10px; color: rgba(255,255,255,0.22);
+    pointer-events: none;
+    font-family: var(--mono); letter-spacing: 0.5px;
+  }
+  .stl-hint {
+    position: absolute; bottom: 10px; right: 12px;
+    font-size: 10px; color: rgba(255,255,255,0.28);
+    pointer-events: none;
+    font-family: var(--mono); letter-spacing: 0.5px;
+    transition: opacity 0.6s;
+  }
+
   /* Preview loading / error */
   .preview-loading, .preview-error {
     display: flex;
@@ -1069,6 +1098,7 @@ const EXT = {
   video: new Set(['mp4','mkv','avi','mov','webm','m4v','ogv','flv']),
   audio: new Set(['mp3','flac','wav','ogg','aac','m4a','opus','wma','ape']),
   pdf:      new Set(['pdf']),
+  stl:      new Set(['stl']),
   markdown: new Set(['md', 'markdown']),
   zip:      new Set(['zip']),
   text:  new Set([
@@ -1895,6 +1925,7 @@ function openPreview(result, sourceEl) {
       case 'markdown': await renderMarkdown(result); break;
       case 'zip':      await renderZip(result); break;
       case 'text':     await renderText(result); break;
+      case 'stl':      await renderStl(result);  break;
       default:         renderInfo(result);  break;
     }
   }, 0);
@@ -2185,6 +2216,223 @@ async function renderFolder(result) {
   wrap.appendChild(list);
   previewBody.innerHTML = '';
   previewBody.appendChild(wrap);
+}
+
+// ── STL 3-D preview ───────────────────────────────────────────────────────────
+function parseStlBuffer(buf) {
+  const dv = new DataView(buf);
+  let count, posArr, normArr;
+  const numTriHdr = dv.getUint32(80, true);
+  if (buf.byteLength === 84 + numTriHdr * 50) {
+    // Binary STL
+    count = numTriHdr;
+    posArr  = new Float32Array(count * 9);
+    normArr = new Float32Array(count * 9);
+    for (let i = 0; i < count; i++) {
+      const o = 84 + i * 50;
+      const nx = dv.getFloat32(o,   true);
+      const ny = dv.getFloat32(o+4, true);
+      const nz = dv.getFloat32(o+8, true);
+      for (let v = 0; v < 3; v++) {
+        const vo = o + 12 + v * 12;
+        posArr[i*9+v*3]   = dv.getFloat32(vo,    true);
+        posArr[i*9+v*3+1] = dv.getFloat32(vo+4,  true);
+        posArr[i*9+v*3+2] = dv.getFloat32(vo+8,  true);
+        normArr[i*9+v*3]   = nx;
+        normArr[i*9+v*3+1] = ny;
+        normArr[i*9+v*3+2] = nz;
+      }
+    }
+  } else {
+    // ASCII STL
+    const text = new TextDecoder().decode(buf);
+    const pArr = [], nArr = [];
+    let nx = 0, ny = 0, nz = 1;
+    for (const raw of text.split('\n')) {
+      const t = raw.trim();
+      if (t.startsWith('facet normal')) {
+        const p = t.split(/\s+/);
+        nx = +p[2]; ny = +p[3]; nz = +p[4];
+      } else if (t.startsWith('vertex')) {
+        const p = t.split(/\s+/);
+        pArr.push(+p[1], +p[2], +p[3]);
+        nArr.push(nx, ny, nz);
+      }
+    }
+    count  = Math.floor(pArr.length / 9);
+    posArr  = new Float32Array(pArr);
+    normArr = new Float32Array(nArr);
+  }
+  const MAX_TRIS = 2_000_000;
+  if (count > MAX_TRIS)
+    throw new Error(`model has ${count.toLocaleString()} triangles (limit ${MAX_TRIS.toLocaleString()})`);
+
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,z0=Infinity,z1=-Infinity;
+  for (let i = 0; i < posArr.length; i += 3) {
+    x0=Math.min(x0,posArr[i]);   x1=Math.max(x1,posArr[i]);
+    y0=Math.min(y0,posArr[i+1]); y1=Math.max(y1,posArr[i+1]);
+    z0=Math.min(z0,posArr[i+2]); z1=Math.max(z1,posArr[i+2]);
+  }
+  return { posArr, normArr, count,
+    cx:(x0+x1)/2, cy:(y0+y1)/2, cz:(z0+z1)/2,
+    size: Math.max(x1-x0, y1-y0, z1-z0) || 1 };
+}
+
+async function renderStl(result) {
+  previewBody.innerHTML = '';
+  previewBody.classList.add('stl-mode');
+
+  const wrap   = document.createElement('div');  wrap.className   = 'preview-stl';
+  const canvas = document.createElement('canvas'); canvas.className = 'stl-canvas';
+  const meta   = document.createElement('div');  meta.className   = 'stl-meta';
+  const hint   = document.createElement('div');  hint.className   = 'stl-hint';
+  hint.textContent = 'drag to rotate · scroll to zoom';
+  wrap.append(canvas, meta, hint);
+  previewBody.appendChild(wrap);
+
+  // Gate on file size before fetching — large models can exhaust browser memory
+  const STL_FETCH_LIMIT = 100 * 1024 * 1024; // 100 MB
+  if (result.size_bytes && result.size_bytes > STL_FETCH_LIMIT) {
+    const mb = (result.size_bytes / 1048576).toFixed(0);
+    previewBody.innerHTML = `
+      <div class="preview-info">
+        <div class="preview-info-icon">🖨️</div>
+        <div class="preview-info-name">${escHtml(result.name)}</div>
+        <div class="preview-info-meta">${escHtml(result.size || '')} · STL</div>
+        <div class="preview-no-prev">model is ${escHtml(mb)} MB — too large to preview in-browser</div>
+        <button class="btn info-dl-btn">↓ download file</button>
+      </div>`;
+    previewBody.querySelector('.info-dl-btn').addEventListener('click', () => downloadFile(result.path));
+    return;
+  }
+
+  let rawBuf;
+  try {
+    const res = await fetch(fileUrl(result.path));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    rawBuf = await res.arrayBuffer();
+  } catch (e) {
+    previewBody.innerHTML = `<div class="preview-error">failed to load: ${escHtml(e.message)}</div>`;
+    return;
+  }
+
+  let geo;
+  try { geo = parseStlBuffer(rawBuf); }
+  catch (e) {
+    previewBody.innerHTML = `<div class="preview-error">could not parse STL: ${escHtml(e.message)}</div>`;
+    return;
+  }
+  meta.textContent = `${geo.count.toLocaleString()} triangles`;
+
+  const gl = canvas.getContext('webgl');
+  if (!gl) {
+    previewBody.innerHTML = `<div class="preview-error">WebGL not available in this browser</div>`;
+    return;
+  }
+
+  const VS = `
+    attribute vec3 aPos; attribute vec3 aNorm;
+    uniform mat4 uMVP; uniform mat3 uNM;
+    varying vec3 vN;
+    void main(){ gl_Position=uMVP*vec4(aPos,1.0); vN=normalize(uNM*aNorm); }`;
+  const FS = `
+    precision mediump float;
+    varying vec3 vN; uniform vec3 uCol;
+    void main(){
+      vec3 L=normalize(vec3(1.0,2.0,1.5));
+      float d=max(dot(vN,L),0.0);
+      float db=max(dot(-vN,L),0.0)*0.3;
+      gl_FragColor=vec4(uCol*(0.2+d*0.8+db),1.0);
+    }`;
+
+  function mkShader(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mkShader(gl.VERTEX_SHADER,   VS));
+  gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog); gl.useProgram(prog);
+
+  function mkBuf(data, attr) {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, attr);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  }
+  mkBuf(geo.posArr,  'aPos');
+  mkBuf(geo.normArr, 'aNorm');
+
+  const uMVP = gl.getUniformLocation(prog, 'uMVP');
+  const uNM  = gl.getUniformLocation(prog, 'uNM');
+  const uCol = gl.getUniformLocation(prog, 'uCol');
+
+  // Tint using the current theme's accent colour, desaturated for a material look
+  const hex = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const hm  = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  let cr=0.6,cg=0.7,cb=1.0;
+  if (hm) { cr=parseInt(hm[1],16)/255; cg=parseInt(hm[2],16)/255; cb=parseInt(hm[3],16)/255; }
+  const lum = cr*0.3+cg*0.59+cb*0.11;
+  gl.uniform3f(uCol, cr*0.4+lum*0.6, cg*0.4+lum*0.6, cb*0.4+lum*0.6);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.04, 0.04, 0.08, 1.0);
+
+  // Minimal column-major mat4 math
+  const mul  = (a,b) => { const r=new Float32Array(16); for(let i=0;i<4;i++) for(let j=0;j<4;j++) for(let k=0;k<4;k++) r[j*4+i]+=a[k*4+i]*b[j*4+k]; return r; };
+  const prj  = (fov,asp,n,f) => { const t=1/Math.tan(fov*.5),r=new Float32Array(16); r[0]=t/asp;r[5]=t;r[10]=(f+n)/(n-f);r[11]=-1;r[14]=2*f*n/(n-f); return r; };
+  const tr   = (x,y,z) => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]);
+  const rxm  = a => { const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); };
+  const rym  = a => { const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); };
+  const scm  = s => new Float32Array([s,0,0,0, 0,s,0,0, 0,0,s,0, 0,0,0,1]);
+  const nm3  = m => new Float32Array([m[0],m[1],m[2], m[4],m[5],m[6], m[8],m[9],m[10]]);
+
+  let yaw=0.4, pitch=0.3, dist=2.2;
+  let drag=null, touch0=null, hinted=false;
+  const unhint = () => { if (!hinted) { hinted=true; hint.style.opacity='0'; } };
+
+  function draw() {
+    const w=canvas.clientWidth|0, h=Math.max(canvas.clientHeight|0,1);
+    if (canvas.width!==w||canvas.height!==h) { canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    const rot = mul(rxm(pitch), rym(yaw));
+    const mvp = mul(prj(Math.PI/3.5,w/h,0.01,100),
+                mul(tr(0,0,-dist),
+                mul(rot,
+                mul(scm(1/geo.size), tr(-geo.cx,-geo.cy,-geo.cz)))));
+    gl.uniformMatrix4fv(uMVP, false, mvp);
+    gl.uniformMatrix3fv(uNM,  false, nm3(rot));
+    gl.drawArrays(gl.TRIANGLES, 0, geo.count*3);
+  }
+
+  canvas.addEventListener('mousedown',  e => { drag={x:e.clientX,y:e.clientY,yaw,pitch}; });
+  canvas.addEventListener('mousemove',  e => { if(!drag) return; unhint();
+    yaw   = drag.yaw   + (e.clientX-drag.x)*0.01;
+    pitch = Math.max(-1.5, Math.min(1.5, drag.pitch+(e.clientY-drag.y)*0.01));
+    draw(); });
+  canvas.addEventListener('mouseup',    () => { drag=null; });
+  canvas.addEventListener('mouseleave', () => { drag=null; });
+  canvas.addEventListener('wheel', e => { e.preventDefault(); unhint();
+    dist = Math.max(0.5, Math.min(10, dist+e.deltaY*0.002)); draw(); }, {passive:false});
+
+  canvas.addEventListener('touchstart', e => { e.preventDefault();
+    if (e.touches.length===1) touch0={x:e.touches[0].clientX,y:e.touches[0].clientY,yaw,pitch};
+  }, {passive:false});
+  canvas.addEventListener('touchmove', e => { e.preventDefault();
+    if (e.touches.length===1&&touch0) { unhint();
+      yaw   = touch0.yaw   + (e.touches[0].clientX-touch0.x)*0.01;
+      pitch = Math.max(-1.5, Math.min(1.5, touch0.pitch+(e.touches[0].clientY-touch0.y)*0.01));
+      draw(); }
+  }, {passive:false});
+  canvas.addEventListener('touchend', () => { touch0=null; });
+
+  const ro = new ResizeObserver(() => { if (canvas.isConnected) draw(); else ro.disconnect(); });
+  ro.observe(wrap);
+  draw();
 }
 
 function renderInfo(result) {
