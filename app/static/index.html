@@ -717,6 +717,62 @@
     tab-size: 4;
   }
 
+  /* Markdown preview */
+  .preview-markdown {
+    width: 100%; max-width: 800px; padding: 24px 32px;
+    color: var(--text); font-size: 14px; line-height: 1.7;
+    overflow-y: auto; align-self: stretch;
+  }
+  .preview-markdown h1,.preview-markdown h2,.preview-markdown h3,
+  .preview-markdown h4,.preview-markdown h5,.preview-markdown h6 {
+    color: var(--amber); margin: 1.2em 0 0.4em; line-height: 1.3;
+  }
+  .preview-markdown h1 { font-size: 1.6em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+  .preview-markdown h2 { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+  .preview-markdown a { color: var(--amber); }
+  .preview-markdown code {
+    background: var(--bg2); padding: 1px 5px; border-radius: 3px;
+    font-family: monospace; font-size: 0.88em;
+  }
+  .preview-markdown pre {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 16px; overflow-x: auto;
+  }
+  .preview-markdown pre code { background: none; padding: 0; }
+  .preview-markdown blockquote {
+    border-left: 3px solid var(--amber); margin: 0; padding: 4px 16px;
+    color: var(--text-muted);
+  }
+  .preview-markdown table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  .preview-markdown th,.preview-markdown td {
+    border: 1px solid var(--border); padding: 6px 12px; text-align: left;
+  }
+  .preview-markdown th { background: var(--bg2); color: var(--amber); }
+  .preview-markdown img { max-width: 100%; }
+  .preview-markdown hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+  .preview-markdown ul,.preview-markdown ol { padding-left: 1.5em; }
+  .preview-md-trunc {
+    font-size: 11px; color: var(--text-muted); padding: 8px 0 0;
+    border-top: 1px solid var(--border); margin-top: 16px;
+  }
+
+  /* ZIP listing */
+  .zip-browser { display: flex; flex-direction: column; width: 100%; align-self: stretch; overflow: hidden; }
+  .zip-browser-meta {
+    padding: 7px 16px; font-size: 11px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .zip-entries { flex: 1; overflow-y: auto; font-family: monospace; font-size: 12px; }
+  .zip-entry {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 16px; border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  }
+  .zip-entry-icon { flex-shrink: 0; }
+  .zip-entry-name { flex: 1; color: var(--text); word-break: break-all; min-width: 0; }
+  .zip-entry.is-dir .zip-entry-name { color: var(--amber); }
+  .zip-entry-size { font-size: 11px; color: var(--text-muted); flex-shrink: 0; white-space: nowrap; }
+  .zip-error { padding: 40px; text-align: center; color: var(--red, #e05); font-size: 13px; }
+
   /* Folder browser */
   .folder-browser { display: flex; flex-direction: column; width: 100%; align-self: stretch; overflow: hidden; }
   .folder-browser-path {
@@ -810,6 +866,8 @@
   .result-row:nth-child(5)   { animation-delay: 0.08s }
   .result-row:nth-child(n+6) { animation-delay: 0.10s }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 </head>
 <body>
 
@@ -995,7 +1053,9 @@ const EXT = {
   image: new Set(['jpg','jpeg','png','gif','webp','bmp','ico','avif','svg']),
   video: new Set(['mp4','mkv','avi','mov','webm','m4v','ogv','flv']),
   audio: new Set(['mp3','flac','wav','ogg','aac','m4a','opus','wma','ape']),
-  pdf:   new Set(['pdf']),
+  pdf:      new Set(['pdf']),
+  markdown: new Set(['md', 'markdown']),
+  zip:      new Set(['zip']),
   text:  new Set([
     'txt','md','markdown','rst','log','env','gitignore','dockerignore',
     'py','pyi','rb','go','rs','java','kt','swift','dart','c','cpp','cc','h','hpp',
@@ -1765,12 +1825,14 @@ function openPreview(result, sourceEl) {
   setTimeout(async () => {
     if (result.is_dir) { await renderFolder(result); return; }
     switch (ptype) {
-      case 'image': renderImage(result); break;
-      case 'video': renderVideo(result); break;
-      case 'audio': renderAudio(result); break;
-      case 'pdf':   renderPdf(result);   break;
-      case 'text':  await renderText(result); break;
-      default:      renderInfo(result);  break;
+      case 'image':    renderImage(result); break;
+      case 'video':    renderVideo(result); break;
+      case 'audio':    renderAudio(result); break;
+      case 'pdf':      renderPdf(result);   break;
+      case 'markdown': await renderMarkdown(result); break;
+      case 'zip':      await renderZip(result); break;
+      case 'text':     await renderText(result); break;
+      default:         renderInfo(result);  break;
     }
   }, 0);
 }
@@ -1916,6 +1978,99 @@ async function renderText(result) {
       setTimeout(() => { previewCopyBtn.textContent = '⎘ copy'; }, 1800);
     });
   };
+}
+
+async function renderMarkdown(result) {
+  const MAX = 100 * 1024;
+  let text = '', truncated = false;
+  try {
+    const res = await fetch(fileUrl(result.path));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (total + value.length >= MAX) {
+        chunks.push(value.slice(0, MAX - total));
+        total = MAX; truncated = true;
+        reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(value); total += value.length;
+    }
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    text = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  } catch (e) {
+    previewBody.innerHTML = `<div class="preview-error">failed to load file: ${escHtml(e.message)}</div>`;
+    return;
+  }
+
+  const html = DOMPurify.sanitize(marked.parse(text));
+  const wrap = document.createElement('div');
+  wrap.className = 'preview-markdown';
+  wrap.innerHTML = html;
+  if (truncated) {
+    const notice = document.createElement('div');
+    notice.className = 'preview-md-trunc';
+    notice.textContent = '⚠ showing first 100 KB';
+    wrap.appendChild(notice);
+  }
+  previewBody.innerHTML = '';
+  previewBody.appendChild(wrap);
+
+  previewCopyBtn.style.display = '';
+  previewCopyBtn.textContent = '⎘ copy';
+  previewCopyBtn.onclick = () => {
+    copyText(text).then(() => {
+      previewCopyBtn.textContent = '✓ copied';
+      setTimeout(() => { previewCopyBtn.textContent = '⎘ copy'; }, 1800);
+    }).catch(() => {
+      previewCopyBtn.textContent = 'failed';
+      setTimeout(() => { previewCopyBtn.textContent = '⎘ copy'; }, 1800);
+    });
+  };
+}
+
+async function renderZip(result) {
+  let data;
+  try {
+    const r = await fetch(`/api/ziplist?path=${encodeURIComponent(result.path)}`);
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+  } catch (e) {
+    previewBody.innerHTML = `<div class="zip-error">Could not read zip: ${escHtml(e.message)}</div>`;
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'zip-browser';
+
+  const meta = document.createElement('div');
+  meta.className = 'zip-browser-meta';
+  meta.textContent = `${data.count} ${data.count === 1 ? 'entry' : 'entries'}`;
+  wrap.appendChild(meta);
+
+  const list = document.createElement('div');
+  list.className = 'zip-entries';
+
+  data.entries.forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'zip-entry' + (entry.is_dir ? ' is-dir' : '');
+    const indent = (entry.name.match(/\//g) || []).length - (entry.is_dir ? 1 : 0);
+    row.innerHTML = `
+      <span class="zip-entry-icon" style="padding-left:${indent * 12}px">${entry.is_dir ? '📁' : '📄'}</span>
+      <span class="zip-entry-name">${escHtml(entry.name)}</span>
+      <span class="zip-entry-size">${escHtml(entry.size_label || '')}</span>`;
+    list.appendChild(row);
+  });
+
+  wrap.appendChild(list);
+  previewBody.innerHTML = '';
+  previewBody.appendChild(wrap);
 }
 
 async function renderFolder(result) {

@@ -609,6 +609,36 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
         yield final
 
 
+@app.get("/api/ziplist")
+async def ziplist(path: str = Query(...)):
+    import zipfile
+    full_path = safe_resolve(path)
+    if not full_path:
+        return JSONResponse({"error": "Access denied"}, status_code=403)
+    if not full_path.exists() or not full_path.is_file():
+        return JSONResponse({"error": "File not found"}, status_code=404)
+
+    try:
+        with zipfile.ZipFile(full_path, 'r') as zf:
+            all_infos = sorted(zf.infolist(), key=lambda i: i.filename)
+            truncated = len(all_infos) > MAX_RESULTS
+            entries = []
+            for info in all_infos[:MAX_RESULTS]:
+                entries.append({
+                    "name": info.filename,
+                    "size": info.file_size,
+                    "size_label": format_size_bytes(info.file_size) if not info.filename.endswith('/') else None,
+                    "compressed": info.compress_size,
+                    "is_dir": info.filename.endswith('/'),
+                })
+            return JSONResponse({"path": str(full_path), "count": len(entries), "truncated": truncated, "entries": entries})
+    except zipfile.BadZipFile:
+        return JSONResponse({"error": "Not a valid zip file"}, status_code=400)
+    except RuntimeError as e:
+        # encrypted zip
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
 @app.get("/api/browse")
 async def browse(path: str = Query(...)):
     full_path = safe_resolve(path)

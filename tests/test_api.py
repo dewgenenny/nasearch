@@ -167,6 +167,46 @@ def test_browse_non_directory_returns_400(client):
     assert r.status_code == 400
 
 
+# ── Zip listing ──────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def sample_zip_path(client):
+    """A .zip file under /data, found via search, or skipped if none exists."""
+    results = client.get("/api/search", params={"q": ".zip", "ext": "zip", "limit": 1}).json()["results"]
+    if not results:
+        pytest.skip("No .zip files found in index")
+    return results[0]["path"]
+
+
+def test_ziplist_response_shape(client, sample_zip_path):
+    r = client.get("/api/ziplist", params={"path": sample_zip_path})
+    assert r.status_code == 200
+    data = r.json()
+    assert "path" in data
+    assert "count" in data
+    assert "entries" in data
+    assert isinstance(data["entries"], list)
+
+
+def test_ziplist_entry_fields(client, sample_zip_path):
+    entries = client.get("/api/ziplist", params={"path": sample_zip_path}).json()["entries"]
+    if entries:
+        e = entries[0]
+        assert "name" in e
+        assert "size" in e
+        assert "is_dir" in e
+
+
+def test_ziplist_path_traversal_blocked(client):
+    r = client.get("/api/ziplist", params={"path": "../../etc/passwd"})
+    assert r.status_code == 403
+
+
+def test_ziplist_non_zip_returns_400(client, known_file):
+    r = client.get("/api/ziplist", params={"path": known_file["path"]})
+    assert r.status_code == 400
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 def test_settings_update_valid_interval(idle_client):

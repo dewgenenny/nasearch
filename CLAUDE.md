@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Never commit or push without explicit approval from the user.** Always show what you intend to commit and wait for a clear go-ahead before running `git commit` or `git push`.
 
+**Before proposing any commit for a new feature**, always pause and ask the user about security considerations — covering XSS, path traversal, injection, DoS vectors, and new dependencies. Wait for explicit sign-off before proceeding.
+
 ## What this project is
 
 **NASearch** — a lightweight NAS file search UI. FastAPI serves a REST API and a single-page frontend; `plocate` (`updatedb` + `locate`) does the actual indexing and searching. No Elasticsearch, no Node, no build step.
