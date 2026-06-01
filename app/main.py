@@ -32,28 +32,61 @@ SESSION_HOURS  = int(os.environ.get("SESSION_HOURS", "24"))
 SETTINGS_FILE  = "/index/settings.json"
 SESSION_COOKIE = "nasearch_session"
 
-# In-memory session store: token → expiry timestamp
-_sessions: dict[str, float] = {}
+# In-memory session store: token → {exp, csrf}
+_sessions: dict[str, dict] = {}
 
-def _session_create() -> str:
+def _session_create() -> tuple[str, str]:
     token = secrets.token_urlsafe(32)
-    _sessions[token] = time.time() + SESSION_HOURS * 3600
-    return token
+    csrf  = secrets.token_urlsafe(32)
+    _sessions[token] = {"exp": time.time() + SESSION_HOURS * 3600, "csrf": csrf}
+    return token, csrf
 
 def _session_valid(token: str | None) -> bool:
     if not token:
         return False
-    exp = _sessions.get(token)
-    if exp is None:
+    entry = _sessions.get(token)
+    if entry is None:
         return False
-    if time.time() > exp:
+    if time.time() > entry["exp"]:
         _sessions.pop(token, None)
         return False
     return True
 
+def _session_csrf(token: str | None) -> Optional[str]:
+    entry = _sessions.get(token or "")
+    return entry["csrf"] if entry else None
+
 def _session_delete(token: str | None) -> None:
     if token:
         _sessions.pop(token, None)
+
+# ── CSRF ─────────────────────────────────────────────────────────────────────
+def _csrf_ok(request: Request) -> bool:
+    """Validate X-CSRF-Token header. Skipped in NOAUTH mode (no sessions to hijack)."""
+    if not _auth_enabled:
+        return True
+    expected = _session_csrf(request.cookies.get(SESSION_COOKIE))
+    if not expected:
+        return False
+    provided = request.headers.get("X-CSRF-Token", "")
+    return bool(provided) and secrets.compare_digest(provided, expected)
+
+# ── Login rate limiter ────────────────────────────────────────────────────────
+_login_failures: dict[str, list[float]] = {}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW       = 900   # 15-minute sliding window + lockout
+
+def _rate_limit_ok(ip: str) -> bool:
+    now      = time.time()
+    recent   = [t for t in _login_failures.get(ip, []) if now - t < _LOGIN_WINDOW]
+    _login_failures[ip] = recent
+    return len(recent) < _LOGIN_MAX_ATTEMPTS
+
+def _rate_limit_record(ip: str) -> None:
+    _login_failures.setdefault(ip, []).append(time.time())
+
+def _rate_limit_clear(ip: str) -> None:
+    _login_failures.pop(ip, None)
 
 # ── Startup safety gate ───────────────────────────────────────────────────────
 _auth_enabled = AUTH_USER and AUTH_PASS
@@ -327,13 +360,21 @@ async def login_page():
     return HTMLResponse(_LOGIN_HTML.format(error=""))
 
 @app.post("/login")
-async def login_submit(username: str = Form(""), password: str = Form("")):
+async def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
+    ip = request.client.host if request.client else "unknown"
+    if not _rate_limit_ok(ip):
+        return HTMLResponse(
+            _LOGIN_HTML.format(error='<p class="err">too many attempts — try again in 15 minutes</p>'),
+            status_code=429,
+        )
     if _check_credentials(username, password):
-        token = _session_create()
+        _rate_limit_clear(ip)
+        token, _ = _session_create()
         resp = RedirectResponse(url="/", status_code=303)
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax",
                         max_age=SESSION_HOURS * 3600, path="/")
         return resp
+    _rate_limit_record(ip)
     return HTMLResponse(
         _LOGIN_HTML.format(error='<p class="err">invalid credentials</p>'),
         status_code=401,
@@ -341,6 +382,8 @@ async def login_submit(username: str = Form(""), password: str = Form("")):
 
 @app.post("/api/logout")
 async def logout(request: Request):
+    if not _csrf_ok(request):
+        return JSONResponse({"error": "CSRF token missing or invalid"}, status_code=403)
     _session_delete(request.cookies.get(SESSION_COOKIE))
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie(SESSION_COOKIE, path="/")
@@ -420,10 +463,11 @@ async def search(
 
 
 @app.get("/api/status")
-async def status():
+async def status(request: Request):
     settings = load_settings()
     db_exists = Path(DB_PATH).exists()
     db_size = format_size(DB_PATH) if db_exists else None
+    csrf = _session_csrf(request.cookies.get(SESSION_COOKIE)) if _auth_enabled else None
     return {
         "db_exists": db_exists,
         "db_size": db_size,
@@ -432,11 +476,14 @@ async def status():
         "last_duration_seconds": settings.get("last_duration_seconds"),
         "interval_hours": settings.get("interval_hours", 24),
         "auth_enabled": bool(_auth_enabled),
+        "csrf_token": csrf,
     }
 
 
 @app.post("/api/reindex")
-async def reindex(background_tasks: BackgroundTasks):
+async def reindex(request: Request, background_tasks: BackgroundTasks):
+    if not _csrf_ok(request):
+        return JSONResponse({"error": "CSRF token missing or invalid"}, status_code=403)
     if indexer_state["running"]:
         return JSONResponse({"error": "Indexer already running"}, status_code=409)
     loop = asyncio.get_event_loop()
@@ -445,7 +492,9 @@ async def reindex(background_tasks: BackgroundTasks):
 
 
 @app.post("/api/settings")
-async def update_settings(body: dict):
+async def update_settings(request: Request, body: dict):
+    if not _csrf_ok(request):
+        return JSONResponse({"error": "CSRF token missing or invalid"}, status_code=403)
     settings = load_settings()
     if "interval_hours" in body:
         val = int(body["interval_hours"])
