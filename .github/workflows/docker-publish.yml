@@ -16,16 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start dev container
-        run: docker compose -f docker-compose.dev.yml up -d --build
+      - name: Run tests
+        run: docker compose -f docker-compose.dev.yml up --build --abort-on-container-exit --exit-code-from tests
         env:
           DEV_DATA_PATH: ${{ github.workspace }}
-
-      - name: Install test dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run tests
-        run: pytest -v
 
       - name: Tear down
         if: always()

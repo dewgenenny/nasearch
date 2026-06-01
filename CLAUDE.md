@@ -16,31 +16,21 @@ Designed to run on Unraid via Docker. The array is mounted read-only at `/data`;
 
 With ~250 users on this project, all changes must pass the test suite before being committed.
 
-### One-time setup
+Tests run inside a clean `python:3.12-slim` container (matching CI) so dependency conflicts surface locally rather than on push.
+
+### Run tests (one-liner)
 
 ```bash
-pip install -r requirements-dev.txt
+docker compose -f docker-compose.dev.yml up --build --abort-on-container-exit --exit-code-from tests; docker compose -f docker-compose.dev.yml down
 ```
 
-### 1. Start the dev stack
+This builds the app image, starts the app container, then runs pytest inside a fresh Python 3.12 container against it. Exit code reflects the test result.
+
+### App only (for manual testing in the browser)
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-This mounts `/home/tom` as `/data` (so indexing works without the NAS), uses `./index-dev/` for the DB, and sets `NOAUTH=true`. It always does a full image rebuild to match prod conditions. Port 8000, same as prod.
-
-### 2. Run the tests
-
-```bash
-pytest
-```
-
-The test suite starts the index automatically if needed and waits for it to complete. All tests must pass before pushing. To target a different URL: `NASEARCH_URL=http://localhost:8000 pytest`.
-
-### 3. Tear down
-
-```bash
+docker compose -f docker-compose.dev.yml up -d --build nasearch
+# ...test manually at http://localhost:8000...
 docker compose -f docker-compose.dev.yml down
 ```
 
