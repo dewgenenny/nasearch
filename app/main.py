@@ -589,10 +589,7 @@ async def serve_file(
     Path is validated to be within DATA_PATH before serving.
     Supports HTTP Range requests (required for video/audio seeking).
     """
-    full_path = safe_resolve(path)
-    if not full_path:
-        return JSONResponse({"error": "Access denied: path outside data root"}, status_code=403)
-    fp_s = str(full_path)
+    fp_s = os.path.realpath(path)
     if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
         return JSONResponse({"error": "Access denied: path outside data root"}, status_code=403)
     full_path = Path(fp_s)
@@ -739,10 +736,7 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
 @app.get("/api/ziplist")
 async def ziplist(path: str = Query(...)):
     import zipfile
-    full_path = safe_resolve(path)
-    if not full_path:
-        return JSONResponse({"error": "Access denied"}, status_code=403)
-    fp_s = str(full_path)
+    fp_s = os.path.realpath(path)
     if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
         return JSONResponse({"error": "Access denied"}, status_code=403)
     full_path = Path(fp_s)
@@ -772,10 +766,7 @@ async def ziplist(path: str = Query(...)):
 
 @app.get("/api/browse")
 async def browse(path: str = Query(...)):
-    full_path = safe_resolve(path)
-    if not full_path:
-        return JSONResponse({"error": "Access denied"}, status_code=403)
-    fp_s = str(full_path)
+    fp_s = os.path.realpath(path)
     if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
         return JSONResponse({"error": "Access denied"}, status_code=403)
     full_path = Path(fp_s)
@@ -816,10 +807,7 @@ async def browse(path: str = Query(...)):
 async def zip_check(path: str = Query(...)):
     """Return folder stats (file count, size) without downloading.
     The UI calls this before triggering /api/zip to surface errors early."""
-    full_path = safe_resolve(path)
-    if not full_path:
-        return JSONResponse({"ok": False, "error": "Access denied"}, status_code=403)
-    fp_s = str(full_path)
+    fp_s = os.path.realpath(path)
     if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
         return JSONResponse({"ok": False, "error": "Access denied"}, status_code=403)
     full_path = Path(fp_s)
@@ -837,10 +825,7 @@ async def zip_folder_download(path: str = Query(...)):
     Runs a size-gate scan first (guards against direct URL access bypassing
     the frontend check). Then streams via a sync generator in a thread pool.
     """
-    full_path = safe_resolve(path)
-    if not full_path:
-        return JSONResponse({"error": "Access denied"}, status_code=403)
-    fp_s = str(full_path)
+    fp_s = os.path.realpath(path)
     if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
         return JSONResponse({"error": "Access denied"}, status_code=403)
     full_path = Path(fp_s)
