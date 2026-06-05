@@ -9,10 +9,22 @@
   <TemplateURL>https://raw.githubusercontent.com/dewgenenny/nasearch/main/templates/nasearch.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/dewgenenny/nasearch/main/icon.png</Icon>
   <Overview>
-    Lightweight file search UI for your Unraid array. Uses plocate to index your files and serves a fast browser-based search interface with previews for images, video, audio, PDF, and text files. Supports inline download, folder zip, and optional HTTP Basic Auth. No Elasticsearch, no Node, no build step.
+    NASearch — a lightweight, self-hosted file search UI for your Unraid array.
+
+    Powered by plocate, it indexes your entire array in seconds and delivers instant search across millions of files — directly in your browser.
+
+    FEATURES
+    &#x2022; Rich file previews — images, video (with seek), audio, PDF, rendered Markdown, interactive 3D STL models (WebGL, no plugins), and ZIP contents browser — all inline.
+    &#x2022; Folder browsing — click any result to explore its directory tree; download individual files or whole folders as ZIP archives.
+    &#x2022; Secure login — session-cookie authentication with CSRF protection and rate limiting. No credentials in URLs.
+    &#x2022; Themes &amp; colour customisation — built-in dark, purple, slate, and light themes; set your own background, text, and accent colours; optional scanline overlay.
+    &#x2022; Auto-indexing — configurable scheduler (1 h to 7 days) or manual trigger via the UI; real-time progress indicator.
+
+    No Elasticsearch. No Node. No build step. One container, one volume.
 
     IMPORTANT: You must set either AUTH_USER + AUTH_PASS (recommended) or NOAUTH=true before the app will start.
   </Overview>
+  <Screenshot>https://raw.githubusercontent.com/dewgenenny/nasearch/main/docs/screenshot.png</Screenshot>
   <Support>https://github.com/dewgenenny/nasearch/issues</Support>
   <Project>https://github.com/dewgenenny/nasearch</Project>
   <ReadMe>https://raw.githubusercontent.com/dewgenenny/nasearch/main/README.md</ReadMe>
@@ -60,7 +72,7 @@
     Name="Auth Username"
     Target="AUTH_USER"
     Default=""
-    Description="HTTP Basic Auth username. Set both AUTH_USER and AUTH_PASS to enable authentication (recommended)."
+    Description="Login username. Set both AUTH_USER and AUTH_PASS to enable authentication (recommended)."
     Type="Variable"
     Display="always"
     Required="false"
@@ -70,7 +82,7 @@
     Name="Auth Password"
     Target="AUTH_PASS"
     Default=""
-    Description="HTTP Basic Auth password. Set both AUTH_USER and AUTH_PASS to enable authentication (recommended)."
+    Description="Login password. Set both AUTH_USER and AUTH_PASS to enable authentication (recommended)."
     Type="Variable"
     Display="always"
     Required="false"

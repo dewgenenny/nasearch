@@ -1,10 +1,20 @@
 <CommunityApplications>
   <Profile>
-    **NASearch** — a lightweight file search UI for your Unraid array.
+    **NASearch** — a lightweight, self-hosted file search UI for your Unraid array.
 
-    Powered by `plocate`, it indexes your array and provides a fast, browser-based search interface with file previews (images, video, audio, PDF, text), inline download, folder zip, and optional HTTP Basic Auth.
+    Powered by `plocate`, it indexes your entire array in seconds and delivers instant, browser-based search across millions of files.
 
-    No Elasticsearch. No Node. No build step. Just a single Docker container.
+    **Rich previews** — images, video (with seek), audio, PDF, rendered Markdown, interactive 3D STL models (WebGL), and ZIP contents — all inline in the browser.
+
+    **Folder browsing** — explore directory trees from any search result; download files or whole folders as ZIPs.
+
+    **Secure login** — session-cookie authentication with CSRF protection and rate limiting.
+
+    **Themes &amp; customisation** — dark, purple, slate, and light themes; custom colour palette; optional scanline overlay.
+
+    **Auto-indexing** — configurable scheduler (1 h to 7 days) or manual trigger with live progress.
+
+    No Elasticsearch. No Node. No build step. One container, one volume.
 
     For support and bug reports, please open an issue on GitHub.
   </Profile>
