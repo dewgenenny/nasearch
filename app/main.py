@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 # ── Config ────────────────────────────────────────────────────────────────────
 DB_PATH       = os.environ.get("LOCATE_DB",   "/index/files.db")
 DATA_PATH     = os.environ.get("DATA_PATH",   "/data")
-_DATA_ROOT    = os.path.realpath(DATA_PATH)   # resolved once at startup; used as the barrier prefix
+_DATA_ROOT    = Path(DATA_PATH).resolve()      # resolved once at startup; used as the barrier prefix
 PRUNE_PATHS   = os.environ.get("PRUNE_PATHS", "/data/appdata /data/system /data/domains /data/isos")
 MAX_RESULTS   = int(os.environ.get("MAX_RESULTS", "500"))
 AUTH_USER     = os.environ.get("AUTH_USER",   "")
@@ -300,13 +300,16 @@ def get_icon(path: str) -> str:
 
 
 def safe_resolve(path: str) -> Optional[Path]:
-    """Validate path is within DATA_PATH and return the canonical absolute path."""
+    """Validate path is within DATA_PATH and return the canonical absolute path.
+
+    Uses Path.resolve() + relative_to() so taint-tracking tools (CodeQL) can
+    recognise this as a sanitiser for path-injection findings.
+    """
     try:
-        full_str = os.path.realpath(path)
-        if not (full_str == _DATA_ROOT or full_str.startswith(_DATA_ROOT + os.sep)):
-            return None
-        return Path(full_str)
-    except Exception:
+        full = Path(path).resolve()
+        full.relative_to(_DATA_ROOT)   # raises ValueError if outside data root
+        return full
+    except (ValueError, Exception):
         return None
 
 
@@ -589,14 +592,13 @@ async def serve_file(
     Path is validated to be within DATA_PATH before serving.
     Supports HTTP Range requests (required for video/audio seeking).
     """
-    fp_s = os.path.realpath(path)
-    if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
+    full_path = safe_resolve(path)
+    if full_path is None:
         return JSONResponse({"error": "Access denied: path outside data root"}, status_code=403)
-    full_path = Path(fp_s)
     if not full_path.exists() or not full_path.is_file():
         return JSONResponse({"error": "File not found"}, status_code=404)
 
-    mime_type, _ = mimetypes.guess_type(fp_s)
+    mime_type, _ = mimetypes.guess_type(str(full_path))
     mime_type = mime_type or "application/octet-stream"
 
     disposition = "attachment" if dl else "inline"
@@ -736,10 +738,9 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
 @app.get("/api/ziplist")
 async def ziplist(path: str = Query(...)):
     import zipfile
-    fp_s = os.path.realpath(path)
-    if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
+    full_path = safe_resolve(path)
+    if full_path is None:
         return JSONResponse({"error": "Access denied"}, status_code=403)
-    full_path = Path(fp_s)
     if not full_path.exists() or not full_path.is_file():
         return JSONResponse({"error": "File not found"}, status_code=404)
 
@@ -766,10 +767,9 @@ async def ziplist(path: str = Query(...)):
 
 @app.get("/api/browse")
 async def browse(path: str = Query(...)):
-    fp_s = os.path.realpath(path)
-    if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
+    full_path = safe_resolve(path)
+    if full_path is None:
         return JSONResponse({"error": "Access denied"}, status_code=403)
-    full_path = Path(fp_s)
     if not full_path.exists():
         return JSONResponse({"error": "Path not found"}, status_code=404)
     if not full_path.is_dir():
@@ -807,10 +807,9 @@ async def browse(path: str = Query(...)):
 async def zip_check(path: str = Query(...)):
     """Return folder stats (file count, size) without downloading.
     The UI calls this before triggering /api/zip to surface errors early."""
-    fp_s = os.path.realpath(path)
-    if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
+    full_path = safe_resolve(path)
+    if full_path is None:
         return JSONResponse({"ok": False, "error": "Access denied"}, status_code=403)
-    full_path = Path(fp_s)
     if not full_path.exists() or not full_path.is_dir():
         return JSONResponse({"ok": False, "error": "Not a directory"}, status_code=404)
     loop = asyncio.get_event_loop()
@@ -825,10 +824,9 @@ async def zip_folder_download(path: str = Query(...)):
     Runs a size-gate scan first (guards against direct URL access bypassing
     the frontend check). Then streams via a sync generator in a thread pool.
     """
-    fp_s = os.path.realpath(path)
-    if not (fp_s == _DATA_ROOT or fp_s.startswith(_DATA_ROOT + os.sep)):
+    full_path = safe_resolve(path)
+    if full_path is None:
         return JSONResponse({"error": "Access denied"}, status_code=403)
-    full_path = Path(fp_s)
     if not full_path.exists() or not full_path.is_dir():
         return JSONResponse({"error": "Not a directory"}, status_code=404)
 
