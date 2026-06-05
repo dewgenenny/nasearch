@@ -299,16 +299,15 @@ def get_icon(path: str) -> str:
 
 
 def safe_resolve(path: str) -> Optional[Path]:
-    """Resolve path and ensure it falls within DATA_PATH. Returns None on violation."""
+    """Validate path is within DATA_PATH and return the canonical absolute path."""
     try:
-        root = Path(DATA_PATH).resolve()
-        full = Path(path).resolve()
-        root_str = str(root)
-        full_str = str(full)
-        # startswith guard is the pattern recognised by static analysers as a path sanitiser
+        root_str = os.path.realpath(DATA_PATH)
+        full_str = os.path.realpath(path)
+        # startswith on the resolved string is the barrier CodeQL's taint tracker recognises;
+        # Path() is then constructed from the sanitised string so the return value is clean
         if not (full_str == root_str or full_str.startswith(root_str + os.sep)):
             return None
-        return full
+        return Path(full_str)
     except Exception:
         return None
 
