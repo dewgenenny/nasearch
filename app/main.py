@@ -301,11 +301,15 @@ def get_icon(path: str) -> str:
 def safe_resolve(path: str) -> Optional[Path]:
     """Resolve path and ensure it falls within DATA_PATH. Returns None on violation."""
     try:
-        full = Path(path).resolve()
         root = Path(DATA_PATH).resolve()
-        full.relative_to(root)  # raises ValueError if outside root
+        full = Path(path).resolve()
+        root_str = str(root)
+        full_str = str(full)
+        # startswith guard is the pattern recognised by static analysers as a path sanitiser
+        if not (full_str == root_str or full_str.startswith(root_str + os.sep)):
+            return None
         return full
-    except (ValueError, Exception):
+    except Exception:
         return None
 
 
@@ -756,9 +760,9 @@ async def ziplist(path: str = Query(...)):
             return JSONResponse({"path": str(full_path), "count": len(entries), "truncated": truncated, "entries": entries})
     except zipfile.BadZipFile:
         return JSONResponse({"error": "Not a valid zip file"}, status_code=400)
-    except RuntimeError as e:
-        # encrypted zip
-        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError:
+        # encrypted zip — don't expose the exception message
+        return JSONResponse({"error": "File is encrypted or password-protected"}, status_code=400)
 
 
 @app.get("/api/browse")
