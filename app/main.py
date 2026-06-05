@@ -21,7 +21,8 @@ from contextlib import asynccontextmanager
 # ── Config ────────────────────────────────────────────────────────────────────
 DB_PATH       = os.environ.get("LOCATE_DB",   "/index/files.db")
 DATA_PATH     = os.environ.get("DATA_PATH",   "/data")
-_DATA_ROOT    = Path(DATA_PATH).resolve()      # resolved once at startup; used as the barrier prefix
+_DATA_ROOT     = os.path.normpath(DATA_PATH)    # textual normalisation — matches CodeQL's sanitiser pattern
+_DATA_ROOT_REAL = os.path.realpath(DATA_PATH)   # symlinks resolved — used as a second-layer barrier
 PRUNE_PATHS   = os.environ.get("PRUNE_PATHS", "/data/appdata /data/system /data/domains /data/isos")
 MAX_RESULTS   = int(os.environ.get("MAX_RESULTS", "500"))
 AUTH_USER     = os.environ.get("AUTH_USER",   "")
@@ -302,15 +303,21 @@ def get_icon(path: str) -> str:
 def safe_resolve(path: str) -> Optional[Path]:
     """Validate path is within DATA_PATH and return the canonical absolute path.
 
-    Uses Path.resolve() + relative_to() so taint-tracking tools (CodeQL) can
-    recognise this as a sanitiser for path-injection findings.
+    Uses the exact ``os.path.normpath`` + ``startswith`` pattern documented as
+    a sanitiser in CodeQL's py/path-injection rule
+    (https://codeql.github.com/codeql-query-help/python/py-path-injection/).
+    A second pass with ``os.path.realpath`` then blocks symlink escapes, which
+    textual normalisation alone does not catch.
     """
-    try:
-        full = Path(path).resolve()
-        full.relative_to(_DATA_ROOT)   # raises ValueError if outside data root
-        return full
-    except (ValueError, Exception):
+    # First layer — textual normalisation. CodeQL recognises this as a sanitiser.
+    fullpath = os.path.normpath(path)
+    if not (fullpath == _DATA_ROOT or fullpath.startswith(_DATA_ROOT + os.sep)):
         return None
+    # Second layer — resolve any symlinks and re-verify against the real root.
+    realpath = os.path.realpath(fullpath)
+    if not (realpath == _DATA_ROOT_REAL or realpath.startswith(_DATA_ROOT_REAL + os.sep)):
+        return None
+    return Path(realpath)
 
 
 # ── Login page ───────────────────────────────────────────────────────────────
@@ -644,20 +651,22 @@ class _NonSeekableBuf:
 
 def _scan_folder(folder: Path) -> dict:
     """Count files and bytes under folder. Returns early once limits are hit."""
-    root = Path(DATA_PATH).resolve()
     file_count = 0
     total_bytes = 0
     for entry in folder.rglob("*"):
         if not entry.is_file():
             continue
-        # Skip symlinks that resolve outside DATA_PATH
-        try:
-            entry.resolve().relative_to(root)
-        except ValueError:
+        # Skip symlinks that escape DATA_PATH — uses the CodeQL-recognised
+        # sanitiser pattern (normpath + startswith) so taint analysis sees a barrier.
+        entry_norm = os.path.normpath(str(entry))
+        if not (entry_norm == _DATA_ROOT or entry_norm.startswith(_DATA_ROOT + os.sep)):
+            continue
+        entry_real = os.path.realpath(entry_norm)
+        if not (entry_real == _DATA_ROOT_REAL or entry_real.startswith(_DATA_ROOT_REAL + os.sep)):
             continue
         file_count += 1
         try:
-            total_bytes += entry.stat().st_size
+            total_bytes += Path(entry_real).stat().st_size
         except OSError:
             pass
         if file_count > ZIP_MAX_FILES or total_bytes > ZIP_MAX_BYTES:
@@ -693,26 +702,29 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
     CHUNK = 256 * 1024
     buf = _NonSeekableBuf()
 
-    root = Path(DATA_PATH).resolve()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         for fpath in sorted(folder.rglob("*")):
             if not fpath.is_file():
                 continue
-            # Skip symlinks that resolve outside DATA_PATH
-            try:
-                fpath.resolve().relative_to(root)
-            except ValueError:
+            # Skip symlinks that escape DATA_PATH — uses the same CodeQL-recognised
+            # sanitiser pattern as safe_resolve() so taint analysis sees a barrier.
+            fpath_norm = os.path.normpath(str(fpath))
+            if not (fpath_norm == _DATA_ROOT or fpath_norm.startswith(_DATA_ROOT + os.sep)):
                 continue
+            fpath_real = os.path.realpath(fpath_norm)
+            if not (fpath_real == _DATA_ROOT_REAL or fpath_real.startswith(_DATA_ROOT_REAL + os.sep)):
+                continue
+            safe_fpath = Path(fpath_real)
             arcname = fpath.relative_to(folder).as_posix()
             try:
-                st = fpath.stat()
+                st = safe_fpath.stat()
                 dt = datetime.fromtimestamp(st.st_mtime)
                 info = zipfile.ZipInfo(
                     filename=arcname,
                     date_time=(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second),
                 )
                 info.compress_type = zipfile.ZIP_STORED
-                with zf.open(info, "w") as zentry, open(fpath, "rb") as src:
+                with zf.open(info, "w") as zentry, open(safe_fpath, "rb") as src:
                     while True:
                         data = src.read(CHUNK)
                         if not data:
