@@ -437,6 +437,31 @@
   }
   #ext-input::placeholder { color: var(--text-muted); }
 
+  /* Archive filter toggle in search bar */
+  .arch-filter {
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 8px;
+    border-left: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #no-archives-btn {
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 0;
+    cursor: pointer;
+    transition: color 0.12s;
+    min-width: 28px;
+    text-align: left;
+  }
+  #no-archives-btn:hover  { color: var(--text-dim); }
+  #no-archives-btn.active { color: var(--accent); }
+
   /* ── Toolbar ── */
   .toolbar {
     display: flex;
@@ -1061,6 +1086,18 @@
     </div>
 
     <div class="settings-section">
+      <div class="settings-label">Archive indexing</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
+        <label class="scan-toggle" title="When off, archive-mounted directories (e.g. .zip, .7z) are skipped during indexing">
+          <input type="checkbox" id="index-archives-chk" checked>
+          <span class="scan-slider"></span>
+        </label>
+        <span style="font-size:12px;color:var(--text-dim)">Index archive contents</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Takes effect on next re-index</div>
+    </div>
+
+    <div class="settings-section">
       <div class="settings-label">Theme</div>
       <div class="interval-row">
         <button class="ivl-btn theme-btn" data-theme="dark">Dark</button>
@@ -1122,6 +1159,10 @@
         maxlength="12"
       >
     </div>
+    <div class="arch-filter">
+      <span class="ext-label">arch</span>
+      <button id="no-archives-btn" title="Hide results from inside mounted archives (paths like …/archive.zip/file.txt). Click to toggle.">all</button>
+    </div>
   </div>
 
   <div class="toolbar">
@@ -1179,39 +1220,50 @@
 'use strict';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const searchInput    = document.getElementById('search-input');
-const extInput       = document.getElementById('ext-input');
-const container      = document.getElementById('results-container');
-const countEl        = document.getElementById('result-count');
-const loadingEl      = document.getElementById('loading');
-const truncWarn      = document.getElementById('truncated-warn');
-const errorBox       = document.getElementById('error-box');
-const statusDot      = document.getElementById('status-dot');
-const statusText     = document.getElementById('status-text');
-const settingsToggle = document.getElementById('settings-toggle');
-const logoutBtn      = document.getElementById('logout-btn');
-const settingsPanel  = document.getElementById('settings-panel');
-const reindexBtn     = document.getElementById('reindex-btn');
-const reindexMsg     = document.getElementById('reindex-msg');
-const infoLast       = document.getElementById('info-last');
-const infoDuration   = document.getElementById('info-duration');
-const infoDbSize     = document.getElementById('info-dbsize');
-const infoNext       = document.getElementById('info-next');
-const previewOverlay = document.getElementById('preview-overlay');
-const previewModal   = document.getElementById('preview-modal');
-const previewCrumb   = document.getElementById('preview-crumb');
-const previewBody    = document.getElementById('preview-body');
-const previewDlBtn   = document.getElementById('preview-dl-btn');
-const previewCopyBtn = document.getElementById('preview-copy-btn');
-const previewCloseBtn= document.getElementById('preview-close-btn');
+const searchInput     = document.getElementById('search-input');
+const extInput        = document.getElementById('ext-input');
+const noArchivesBtn   = document.getElementById('no-archives-btn');
+const indexArchivesChk= document.getElementById('index-archives-chk');
+const container       = document.getElementById('results-container');
+const countEl         = document.getElementById('result-count');
+const loadingEl       = document.getElementById('loading');
+const truncWarn       = document.getElementById('truncated-warn');
+const errorBox        = document.getElementById('error-box');
+const statusDot       = document.getElementById('status-dot');
+const statusText      = document.getElementById('status-text');
+const settingsToggle  = document.getElementById('settings-toggle');
+const logoutBtn       = document.getElementById('logout-btn');
+const settingsPanel   = document.getElementById('settings-panel');
+const reindexBtn      = document.getElementById('reindex-btn');
+const reindexMsg      = document.getElementById('reindex-msg');
+const infoLast        = document.getElementById('info-last');
+const infoDuration    = document.getElementById('info-duration');
+const infoDbSize      = document.getElementById('info-dbsize');
+const infoNext        = document.getElementById('info-next');
+const previewOverlay  = document.getElementById('preview-overlay');
+const previewModal    = document.getElementById('preview-modal');
+const previewCrumb    = document.getElementById('preview-crumb');
+const previewBody     = document.getElementById('preview-body');
+const previewDlBtn    = document.getElementById('preview-dl-btn');
+const previewCopyBtn  = document.getElementById('preview-copy-btn');
+const previewCloseBtn = document.getElementById('preview-close-btn');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let debounceTimer        = null;
 let searchAbortCtrl      = null;   // cancels in-flight /api/search fetch
 let currentIntervalHours = 24;
+let noArchives           = localStorage.getItem('nasearch_no_archives') === 'true';
 let previewCurrentPath   = null;
 let previewReturnFocus   = null;
 let csrfToken            = '';
+
+function setNoArchives(on) {
+  noArchives = on;
+  localStorage.setItem('nasearch_no_archives', on ? 'true' : 'false');
+  noArchivesBtn.textContent = on ? 'hide' : 'all';
+  noArchivesBtn.classList.toggle('active', on);
+}
+setNoArchives(noArchives);
 
 function postWithCsrf(url, body = null) {
   const headers = { 'X-CSRF-Token': csrfToken };
@@ -1864,6 +1916,16 @@ function setScanlines(on) {
 
 scanlineChk.addEventListener('change', () => setScanlines(scanlineChk.checked));
 
+indexArchivesChk.addEventListener('change', async () => {
+  await postWithCsrf('/api/settings', { index_archives: indexArchivesChk.checked });
+  showToast(
+    indexArchivesChk.checked
+      ? 'Archive indexing enabled — re-index to apply'
+      : 'Archive indexing disabled — re-index to apply',
+    'info',
+  );
+});
+
 // Initialise on load
 const savedScanlines = localStorage.getItem('nasearch_scanlines');
 setScanlines(savedScanlines !== 'off');   // default on
@@ -1961,6 +2023,7 @@ function updateStatusUI(s) {
   infoNext.textContent     = fmtNext(s.last_indexed, s.interval_hours);
   currentIntervalHours     = s.interval_hours;
   setIntervalActive(s.interval_hours);
+  if (s.index_archives !== undefined) indexArchivesChk.checked = s.index_archives;
   logoutBtn.style.display  = s.auth_enabled ? '' : 'none';
 }
 
@@ -2058,8 +2121,9 @@ async function doSearch() {
   loadingEl.style.display = 'block';
   try {
     const params = new URLSearchParams();
-    if (q)   params.set('q', q);
-    if (ext) params.set('ext', ext);
+    if (q)           params.set('q', q);
+    if (ext)         params.set('ext', ext);
+    if (noArchives)  params.set('no_archives', '1');
     const res  = await fetch(`/api/search?${params}`, { signal: searchAbortCtrl.signal });
     const data = await res.json();
     renderResults(data, q);
@@ -2079,6 +2143,7 @@ function scheduleSearch() {
 
 searchInput.addEventListener('input', scheduleSearch);
 extInput.addEventListener('input', scheduleSearch);
+noArchivesBtn.addEventListener('click', () => { setNoArchives(!noArchives); scheduleSearch(); });
 
 // ── Preview modal ─────────────────────────────────────────────────────────────
 function openPreview(result, sourceEl) {

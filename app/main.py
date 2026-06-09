@@ -1,5 +1,6 @@
 import subprocess
 import os
+import re
 import stat as stat_mod
 import io
 import json
@@ -114,8 +115,19 @@ if not _auth_enabled and not NOAUTH:
     )
     raise SystemExit(1)
 
+# Archive extensions that may be FUSE-mounted as directories on Unraid/similar NAS systems.
+# Paths like /data/backup.zip/some/file.txt indicate the zip is mounted as a directory.
+_ARCHIVE_RE = re.compile(
+    r'\.(zip|7z|rar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz)/',
+    re.IGNORECASE,
+)
+# Passed to updatedb --prunenames when index_archives=False.
+# Preserves the updatedb defaults (.git .bzr .hg .svn) while adding archive globs.
+_ARCHIVE_PRUNENAMES = ".git .bzr .hg .svn *.zip *.7z *.rar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz"
+
 DEFAULT_SETTINGS = {
     "interval_hours": 24,   # 0 = manual only
+    "index_archives": True,  # when False, updatedb skips archive-mounted directories
     "last_indexed": None,
     "last_duration_seconds": None,
 }
@@ -166,12 +178,15 @@ def run_index_sync():
     started = datetime.now(timezone.utc)
 
     try:
+        settings = load_settings()
         cmd = [
             "updatedb", "-l", "0",
             "-o", DB_PATH,
             "-U", DATA_PATH,
             "--prunepaths", PRUNE_PATHS,
         ]
+        if not settings.get("index_archives", True):
+            cmd += ["--prunenames", _ARCHIVE_PRUNENAMES]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         duration = (datetime.now(timezone.utc) - started).total_seconds()
 
@@ -444,6 +459,7 @@ async def search(
     q: str = Query("", min_length=0),
     ext: Optional[str] = Query(None),
     limit: int = Query(MAX_RESULTS, le=MAX_RESULTS),
+    no_archives: bool = Query(False),
 ):
     if not q and not ext:
         return JSONResponse({"results": [], "total": 0, "truncated": False})
@@ -482,6 +498,9 @@ async def search(
         ext_clean = ext.lstrip(".").lower()
         lines = [l for l in lines if l.lower().endswith(f".{ext_clean}")]
 
+    if no_archives:
+        lines = [l for l in lines if not _ARCHIVE_RE.search(l)]
+
     truncated = len(lines) > limit
     lines = lines[:limit]
 
@@ -516,6 +535,7 @@ async def status(request: Request):
         "last_indexed": settings.get("last_indexed"),
         "last_duration_seconds": settings.get("last_duration_seconds"),
         "interval_hours": settings.get("interval_hours", 24),
+        "index_archives": settings.get("index_archives", True),
         "auth_enabled": bool(_auth_enabled),
         "csrf_token": csrf,
     }
@@ -594,6 +614,9 @@ async def update_settings(request: Request, body: dict):
         if val not in [0, 1, 6, 12, 24, 48, 168]:
             return JSONResponse({"error": "Invalid interval"}, status_code=400)
         settings["interval_hours"] = val
+    raw_archives = body.get("index_archives")
+    if raw_archives is not None:
+        settings["index_archives"] = bool(raw_archives)
     save_settings(settings)
     return {"ok": True, "settings": settings}
 

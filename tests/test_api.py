@@ -4,6 +4,7 @@ Integration tests for the NASearch API.
 Assumes the dev container is running (docker compose -f docker-compose.dev.yml up -d --build)
 with NOAUTH=true and /home/tom mounted as /data.
 """
+import re
 import pytest
 
 
@@ -230,6 +231,83 @@ def test_settings_reset_to_zero(idle_client):
     # Leave the container in a clean state (manual-only mode)
     r = idle_client.post("/api/settings", json={"interval_hours": 0})
     assert r.status_code == 200
+
+
+# ── Archive indexing settings ─────────────────────────────────────────────────
+
+def test_status_includes_index_archives(client):
+    data = client.get("/api/status").json()
+    assert "index_archives" in data
+    assert isinstance(data["index_archives"], bool)
+
+
+def test_status_index_archives_defaults_true(client):
+    data = client.get("/api/status").json()
+    assert data["index_archives"] is True
+
+
+def test_settings_index_archives_disable(idle_client):
+    r = idle_client.post("/api/settings", json={"index_archives": False})
+    assert r.status_code == 200
+    assert r.json()["settings"]["index_archives"] is False
+    idle_client.post("/api/settings", json={"index_archives": True})
+
+
+def test_settings_index_archives_persisted_to_status(idle_client):
+    idle_client.post("/api/settings", json={"index_archives": False})
+    data = idle_client.get("/api/status").json()
+    assert data["index_archives"] is False
+    idle_client.post("/api/settings", json={"index_archives": True})
+
+
+def test_settings_index_archives_re_enable(idle_client):
+    idle_client.post("/api/settings", json={"index_archives": False})
+    idle_client.post("/api/settings", json={"index_archives": True})
+    assert idle_client.get("/api/status").json()["index_archives"] is True
+
+
+# ── no_archives search filter ─────────────────────────────────────────────────
+
+def test_search_no_archives_param_accepted(client):
+    r = client.get("/api/search", params={"q": ".", "no_archives": "1"})
+    assert r.status_code == 200
+    data = r.json()
+    assert "results" in data
+    assert "truncated" in data
+
+
+def test_search_no_archives_result_shape_unchanged(client):
+    # Filtering must not break the result objects — fields are still present.
+    r = client.get("/api/search", params={"q": ".", "no_archives": "1"})
+    assert r.status_code == 200
+    for item in r.json()["results"]:
+        for field in ("path", "name", "dir", "ext", "is_dir"):
+            assert field in item
+
+
+_ARCHIVE_MID_PATH = re.compile(
+    r'\.(zip|7z|rar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz)/',
+    re.IGNORECASE,
+)
+
+def test_search_no_archives_filters_archive_paths(client):
+    # Any result returned with no_archives=1 must not have an archive extension
+    # mid-path (e.g. /data/backup.zip/file.txt).  True whether or not the test
+    # index actually contains such paths.
+    r = client.get("/api/search", params={"q": ".", "no_archives": "1"})
+    assert r.status_code == 200
+    for item in r.json()["results"]:
+        assert not _ARCHIVE_MID_PATH.search(item["path"]), (
+            f"Archive-internal path leaked through filter: {item['path']}"
+        )
+
+
+def test_search_without_no_archives_ignores_filter(client):
+    # Default behaviour (no_archives absent) returns a superset — the filtered
+    # result set must be a subset of the unfiltered one.
+    full  = {i["path"] for i in client.get("/api/search", params={"q": "."}).json()["results"]}
+    filt  = {i["path"] for i in client.get("/api/search", params={"q": ".", "no_archives": "1"}).json()["results"]}
+    assert filt <= full
 
 
 # ── File serving ──────────────────────────────────────────────────────────────
