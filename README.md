@@ -128,6 +128,9 @@ environment:
 - A per-session CSRF token is validated on all state-changing requests
 - Login is rate-limited: 5 failed attempts within 15 minutes locks the IP out for 15 minutes
 - CDN scripts (marked.js, DOMPurify) are loaded with Subresource Integrity hashes — the browser refuses to execute them if the content doesn't match
+- A Content-Security-Policy restricts where the UI may load scripts, styles and data from
+- Files from the array are treated as untrusted: HTML/XML is never served inline with an executable MIME type, and inline previews carry a `Content-Security-Policy: sandbox` header so a malicious file on the NAS can't run scripts on NASearch's origin
+- If you serve NASearch over HTTPS, set `COOKIE_SECURE=true` so the session cookie is never sent over plain HTTP
 
 ### Use HTTPS — and think carefully before exposing it at all
 
@@ -155,6 +158,7 @@ The actual risk surface is kept small by other means:
 | `AUTH_USER` | _(unset)_ | Login username; both must be set to enable auth |
 | `AUTH_PASS` | _(unset)_ | Login password |
 | `SESSION_HOURS` | `24` | Session cookie lifetime in hours |
+| `COOKIE_SECURE` | `false` | Set `true` when serving over HTTPS (e.g. behind a TLS reverse proxy) to add the `Secure` flag to the session cookie |
 | `NOAUTH` | `false` | Set `true` to start without auth (acknowledged risk) |
 | `DATA_PATH` | `/data` | Root path that is indexed and served |
 | `LOCATE_DB` | `/index/files.db` | Path to the plocate database |

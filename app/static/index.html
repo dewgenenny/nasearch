@@ -1027,11 +1027,13 @@
   .result-row:nth-child(5)   { animation-delay: 0.08s }
   .result-row:nth-child(n+6) { animation-delay: 0.10s }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"
+<!-- Versions are pinned exactly: a floating tag (e.g. @3) breaks the SRI hash
+     as soon as the CDN serves a newer build, and the script silently fails to load. -->
+<script src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
         integrity="sha384-9Md4MlJk24bo2Ifubp0FbKhuES4/iAwyTGMeWpBG4RoHGTKygpEGEpOYhEQxbfa9"
         crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"
-        integrity="sha384-C5g1ZoYBpnvKyArNZI21kaBEk3egHOYfHj/cUOHmyJ7CSDMyNMyM+STqfkBt8m2Y"
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"
+        integrity="sha384-JEyTNhjM6R1ElGoJns4U2Ln4ofPcqzSsynQkmEc/KGy6336qAZl70tDLufbkla+3"
         crossorigin="anonymous"></script>
 </head>
 <body>
@@ -2386,6 +2388,12 @@ async function renderMarkdown(result) {
     return;
   }
 
+  if (typeof DOMPurify === 'undefined' || typeof marked === 'undefined') {
+    // Sanitizer unavailable (CDN unreachable or SRI mismatch) — never render
+    // markdown unsanitized; fall back to the plain-text viewer.
+    await renderText(result);
+    return;
+  }
   const html = DOMPurify.sanitize(marked.parse(text));
   const wrap = document.createElement('div');
   wrap.className = 'preview-markdown';

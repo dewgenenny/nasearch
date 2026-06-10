@@ -33,6 +33,7 @@ NOAUTH        = os.environ.get("NOAUTH",      "false").strip().lower() == "true"
 ZIP_MAX_FILES  = int(os.environ.get("ZIP_MAX_FILES", "2000"))
 ZIP_MAX_BYTES  = int(os.environ.get("ZIP_MAX_BYTES", str(2 * 1024 ** 3)))  # 2 GB
 SESSION_HOURS  = int(os.environ.get("SESSION_HOURS", "24"))
+COOKIE_SECURE  = os.environ.get("COOKIE_SECURE", "false").strip().lower() == "true"
 SETTINGS_FILE  = "/index/settings.json"
 SESSION_COOKIE = "nasearch_session"
 
@@ -87,7 +88,13 @@ def _rate_limit_ok(ip: str) -> bool:
     return len(recent) < _LOGIN_MAX_ATTEMPTS
 
 def _rate_limit_record(ip: str) -> None:
-    _login_failures.setdefault(ip, []).append(time.time())
+    now = time.time()
+    # Bound memory: drop IPs whose failures have all aged out of the window,
+    # so an attacker rotating source IPs can't grow the dict indefinitely.
+    if len(_login_failures) > 10_000:
+        for k in [k for k, v in _login_failures.items() if not v or now - v[-1] >= _LOGIN_WINDOW]:
+            _login_failures.pop(k, None)
+    _login_failures.setdefault(ip, []).append(now)
 
 def _rate_limit_clear(ip: str) -> None:
     _login_failures.pop(ip, None)
@@ -259,12 +266,33 @@ app = FastAPI(lifespan=lifespan)
 
 
 # ── Security headers (middleware) ────────────────────────────────────────────
+# CSP for the app's own pages (SPA + login). The SPA uses inline <script>/<style>
+# and loads marked/dompurify from jsdelivr (SRI-pinned), fonts from Google Fonts.
+# object-src 'self' is required for the <embed> PDF preview; media/img cover the
+# /api/file preview URLs. NOT applied to /api/ responses — /api/file sets its own
+# sandbox policy below.
+_PAGE_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data:; "
+    "media-src 'self'; "
+    "connect-src 'self'; "
+    "object-src 'self'; "
+    "frame-ancestors 'self'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "same-origin"
+    if not request.url.path.startswith("/api/"):
+        response.headers.setdefault("Content-Security-Policy", _PAGE_CSP)
     return response
 
 
@@ -436,6 +464,7 @@ async def login_submit(request: Request, username: str = Form(""), password: str
         token, _ = _session_create()
         resp = RedirectResponse(url="/", status_code=303)
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax",
+                        secure=COOKIE_SECURE,
                         max_age=SESSION_HOURS * 3600, path="/")
         return resp
     _rate_limit_record(ip)
@@ -458,7 +487,7 @@ async def logout(request: Request):
 async def search(
     q: str = Query("", min_length=0),
     ext: Optional[str] = Query(None),
-    limit: int = Query(MAX_RESULTS, le=MAX_RESULTS),
+    limit: int = Query(MAX_RESULTS, ge=1, le=MAX_RESULTS),
     no_archives: bool = Query(False),
 ):
     if not q and not ext:
@@ -651,6 +680,19 @@ async def serve_file(
         "Content-Disposition": f"{disposition}; filename*=UTF-8''{encoded_name}",
         "Cache-Control": "private, max-age=3600",
     }
+
+    if not dl:
+        # Stored-XSS hardening: files on the array are untrusted content. Served
+        # inline on this origin, an HTML/XML file would execute scripts with full
+        # access to the app (session, CSRF token). Downgrade those types to plain
+        # text — the SPA's text preview fetches raw bytes, so it is unaffected.
+        if mime_type in ("text/html", "application/xhtml+xml", "text/xml", "application/xml"):
+            mime_type = "text/plain"
+        # SVG must keep its MIME type for <img> previews to work (nosniff is set
+        # globally), so neutralise script execution on direct navigation instead.
+        # PDFs are exempt: Chrome's viewer won't render under a sandbox policy.
+        if mime_type != "application/pdf":
+            headers["Content-Security-Policy"] = "sandbox"
 
     return FileResponse(fullpath, media_type=mime_type, headers=headers)
 

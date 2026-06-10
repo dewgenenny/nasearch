@@ -26,6 +26,13 @@ def test_homepage_returns_html(client):
     assert "text/html" in r.headers["content-type"]
 
 
+def test_homepage_has_csp(client):
+    r = client.get("/")
+    csp = r.headers.get("content-security-policy", "")
+    assert "default-src 'self'" in csp
+    assert "frame-ancestors 'self'" in csp
+
+
 # ── Status ────────────────────────────────────────────────────────────────────
 
 def test_status_shape(client):
@@ -337,6 +344,41 @@ def test_file_serve_unknown_path_returns_404(client):
 def test_file_serve_path_traversal_blocked(client):
     r = client.get("/api/file", params={"path": "../../etc/passwd"})
     assert r.status_code == 403
+
+
+@pytest.fixture(scope="module")
+def sample_html_path(client):
+    """An .html file under /data, found via search, or skipped if none exists."""
+    results = client.get("/api/search", params={"q": ".html", "ext": "html", "limit": 1}).json()["results"]
+    if not results:
+        pytest.skip("No .html files found in index")
+    return results[0]["path"]
+
+
+def test_file_serve_html_inline_downgraded_to_text_plain(client, sample_html_path):
+    # HTML from the array must never be served inline as text/html — it would
+    # execute scripts on the app's origin (stored XSS).
+    r = client.get("/api/file", params={"path": sample_html_path})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_file_serve_html_download_keeps_attachment(client, sample_html_path):
+    r = client.get("/api/file", params={"path": sample_html_path, "dl": "1"})
+    assert r.status_code == 200
+    assert "attachment" in r.headers.get("content-disposition", "")
+
+
+def test_file_serve_inline_has_sandbox_csp(client, sample_file_path):
+    r = client.get("/api/file", params={"path": sample_file_path})
+    assert r.status_code == 200
+    if not r.headers["content-type"].startswith("application/pdf"):
+        assert r.headers.get("content-security-policy") == "sandbox"
+
+
+def test_search_negative_limit_rejected(client):
+    r = client.get("/api/search", params={"q": "test", "limit": -1})
+    assert r.status_code == 422
 
 
 # ── Auth (NOAUTH mode) ────────────────────────────────────────────────────────
