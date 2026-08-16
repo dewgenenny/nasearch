@@ -83,15 +83,15 @@ Everything meaningful lives in two files:
 | Config | Read from env vars at startup: `LOCATE_DB`, `DATA_PATH`, `PRUNE_PATHS`, `MAX_RESULTS`, `AUTH_USER`, `AUTH_PASS` |
 | Auth | HTTP Basic Auth middleware; enabled only when both `AUTH_USER` and `AUTH_PASS` are set. Protects all routes including static files. Uses `secrets.compare_digest` to resist timing attacks. |
 | Settings | Persisted to `/index/settings.json` — `interval_hours` and last-run metadata |
-| Indexer | `run_index_sync()` wraps `updatedb` in a subprocess; called via `run_in_executor` so it doesn't block the event loop |
-| Scheduler | `scheduler_loop()` is an async task (started in the FastAPI lifespan) that re-indexes on the configured interval; sleeps 10 min when interval is 0 (manual-only) |
+| Indexer | `run_index_sync()` wraps `updatedb` in a subprocess; called via `run_in_executor` so it doesn't block the event loop. Records `last_attempted` on every run and `last_error` on every outcome |
+| Scheduler | `scheduler_loop()` is an async task (started in the FastAPI lifespan) that re-indexes on the configured interval; sleeps in ≤10 min slices so settings changes land without a restart. `seconds_until_next_index()` enforces a retry floor of `min(1 h, interval)` from the last *attempt*, so a failing index can't re-crawl the array in a hot loop. The loop body catches everything except `CancelledError` — an uncaught exception here would kill the task and silently stop all future indexing |
 | Search | `GET /api/search` shells out to `locate -d <db> -i -- <pattern>`; extension filter applied post-locate when both `q` and `ext` are provided |
 | File serving | `GET /api/file` validates path is within `DATA_PATH` via `safe_resolve()` (path traversal protection), then streams via `FileResponse` which supports HTTP Range requests (needed for video seeking). `dl=1` forces `Content-Disposition: attachment`. |
 | State | `indexer_state` dict is in-memory (not persisted); reflects current run/error/progress |
 
 API endpoints:
 - `GET /api/search?q=&ext=&limit=` — search the index
-- `GET /api/status` — DB existence, size, indexer state, last-run info, interval setting
+- `GET /api/status` — DB existence, size, indexer state, last-run info, interval setting, `last_attempted` / `last_error`
 - `POST /api/reindex` — fire-and-forget background re-index
 - `POST /api/settings` — update `interval_hours` (must be one of: 0, 1, 6, 12, 24, 48, 168)
 - `GET /api/file?path=&dl=` — serve a file inline or as download

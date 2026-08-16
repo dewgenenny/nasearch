@@ -461,3 +461,12 @@ def test_enrich_empty_list_returns_empty(client):
 def test_unknown_api_route_returns_404(client):
     r = client.get("/api/doesnotexist")
     assert r.status_code == 404
+
+
+def test_status_exposes_index_attempt_and_error(client):
+    """#4 — the scheduler computed its next run only from last_indexed, which a
+    failed run never wrote, so failures re-crawled the array every 60s."""
+    data = client.get("/api/status").json()
+    assert "last_attempted" in data
+    assert "last_error" in data
+    assert data["last_attempted"] is not None

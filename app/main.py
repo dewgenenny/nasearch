@@ -1,6 +1,7 @@
 import subprocess
 import os
 import re
+import sys
 import stat as stat_mod
 import io
 import json
@@ -118,7 +119,7 @@ if not _auth_enabled and not NOAUTH:
         "║                                                              ║\n"
         "║  See README.md for details.                                  ║\n"
         "╚══════════════════════════════════════════════════════════════╝\n",
-        file=__import__("sys").stderr,
+        file=sys.stderr,
     )
     raise SystemExit(1)
 
@@ -137,6 +138,8 @@ DEFAULT_SETTINGS = {
     "index_archives": True,  # when False, updatedb skips archive-mounted directories
     "last_indexed": None,
     "last_duration_seconds": None,
+    "last_attempted": None,  # written on every run, success or failure
+    "last_error": None,      # None after a successful run
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -144,6 +147,10 @@ indexer_state = {
     "running": False,
     "progress": None,
     "error": None,
+    # Monotonic-ish wall clock of the last attempt. Held in memory as well as in
+    # settings.json so the retry floor still holds when settings can't be
+    # written — which is exactly the situation where indexing keeps failing.
+    "last_attempt_ts": None,
 }
 _scheduler_task: Optional[asyncio.Task] = None
 
@@ -174,6 +181,21 @@ def save_settings(s: dict):
 
 
 # ── Indexer ───────────────────────────────────────────────────────────────────
+def _record_index_result(error: Optional[str], duration: Optional[float] = None) -> None:
+    """Persist the outcome of an index run. Best-effort: bookkeeping must never
+    mask the real failure, and the in-memory retry floor holds without it."""
+    try:
+        settings = load_settings()
+        settings["last_error"] = error
+        if error is None:
+            settings["last_indexed"] = datetime.now(timezone.utc).isoformat()
+            if duration is not None:
+                settings["last_duration_seconds"] = round(duration)
+        save_settings(settings)
+    except Exception as e:
+        print(f"[indexer] could not persist run outcome: {e!r}", file=sys.stderr)
+
+
 def run_index_sync():
     """Runs updatedb in a thread. Safe to call from asyncio via run_in_executor."""
     if indexer_state["running"]:
@@ -183,9 +205,17 @@ def run_index_sync():
     indexer_state["progress"] = "Starting updatedb…"
     indexer_state["error"] = None
     started = datetime.now(timezone.utc)
+    # Recorded before anything can fail, so a run that dies mid-way still counts
+    # as an attempt and the scheduler backs off instead of retrying immediately.
+    indexer_state["last_attempt_ts"] = time.time()
+    settings = load_settings()
+    settings["last_attempted"] = started.isoformat()
+    try:
+        save_settings(settings)
+    except Exception as e:
+        print(f"[indexer] could not record attempt: {e!r}", file=sys.stderr)
 
     try:
-        settings = load_settings()
         cmd = [
             "updatedb", "-l", "0",
             "-o", DB_PATH,
@@ -199,20 +229,20 @@ def run_index_sync():
 
         if result.returncode != 0:
             indexer_state["error"] = result.stderr.strip() or "updatedb exited with error"
+            _record_index_result(indexer_state["error"])
             return False, indexer_state["error"]
 
-        settings = load_settings()
-        settings["last_indexed"] = datetime.now(timezone.utc).isoformat()
-        settings["last_duration_seconds"] = round(duration)
-        save_settings(settings)
+        _record_index_result(None, duration)
         indexer_state["progress"] = None
         return True, f"Indexed in {round(duration)}s"
 
     except subprocess.TimeoutExpired:
         indexer_state["error"] = "Indexer timed out after 1 hour"
+        _record_index_result(indexer_state["error"])
         return False, indexer_state["error"]
     except Exception as e:
         indexer_state["error"] = str(e)
+        _record_index_result(str(e))
         return False, str(e)
     finally:
         indexer_state["running"] = False
@@ -220,37 +250,84 @@ def run_index_sync():
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
+_SCHEDULER_POLL_SECONDS = 600   # longest single sleep, so settings changes land promptly
+_INDEX_RETRY_FLOOR_SECONDS = 3600
+
+
+def _parse_timestamp(value) -> Optional[datetime]:
+    """Parse a settings timestamp, tolerating anything a hand-edit might leave."""
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def seconds_until_next_index() -> float:
+    """How long to wait before the next automatic index. <= 0 means run now."""
+    settings = load_settings()
+    try:
+        interval_hours = float(settings.get("interval_hours", 24))
+    except (TypeError, ValueError):
+        interval_hours = 24.0
+
+    if interval_hours <= 0:
+        return _SCHEDULER_POLL_SECONDS  # manual only — just keep watching settings
+
+    now = datetime.now(timezone.utc)
+    last_ok = _parse_timestamp(settings.get("last_indexed"))
+    if last_ok is None:
+        wait = 0.0  # never indexed successfully — do it now
+    else:
+        wait = interval_hours * 3600 - (now - last_ok).total_seconds()
+
+    # Retry floor. Without it, a failing run leaves last_indexed untouched, the
+    # wait above stays at 0, and updatedb re-crawls the whole array every minute
+    # forever — keeping every disk spun up until someone notices.
+    floor = min(_INDEX_RETRY_FLOOR_SECONDS, interval_hours * 3600)
+    last_try_ts = indexer_state.get("last_attempt_ts")
+    if last_try_ts is not None:
+        wait = max(wait, floor - (time.time() - last_try_ts))
+    else:
+        last_try = _parse_timestamp(settings.get("last_attempted"))
+        if last_try is not None:
+            wait = max(wait, floor - (now - last_try).total_seconds())
+
+    return wait
+
+
 async def scheduler_loop():
-    """Async loop that re-indexes on the configured interval."""
+    """Async loop that re-indexes on the configured interval.
+
+    Sleeps in slices rather than one long sleep so an interval change takes
+    effect without a restart, and treats any unexpected error as "retry later".
+    An uncaught exception here used to kill the task silently — indexing would
+    simply never happen again, with nothing surfaced in the UI.
+    """
     while True:
-        settings = load_settings()
-        interval_hours = settings.get("interval_hours", 24)
+        try:
+            if indexer_state["running"]:
+                await asyncio.sleep(60)
+                continue
 
-        if interval_hours <= 0:
-            # Manual only — check again in 10 minutes in case settings change
-            await asyncio.sleep(600)
-            continue
+            wait = seconds_until_next_index()
+            if wait > 0:
+                await asyncio.sleep(min(wait, _SCHEDULER_POLL_SECONDS))
+                continue
 
-        last = settings.get("last_indexed")
-        if last:
-            last_dt = datetime.fromisoformat(last)
-            now = datetime.now(timezone.utc)
-            elapsed_hours = (now - last_dt).total_seconds() / 3600
-            wait_hours = max(0, interval_hours - elapsed_hours)
-        else:
-            wait_hours = 0  # Never indexed — do it now
-
-        if wait_hours > 0:
-            await asyncio.sleep(wait_hours * 3600)
-
-        # Re-check interval hasn't been disabled while we were sleeping
-        settings = load_settings()
-        if settings.get("interval_hours", 24) > 0:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, run_index_sync)
-
-        # After indexing, wait the full interval before next run
-        await asyncio.sleep(60)  # brief pause before re-evaluating
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(
+                f"[scheduler] unexpected error: {e!r} — retrying in "
+                f"{_SCHEDULER_POLL_SECONDS}s",
+                file=sys.stderr,
+            )
+            await asyncio.sleep(_SCHEDULER_POLL_SECONDS)
 
 
 # ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -563,6 +640,8 @@ async def status(request: Request):
         "indexer": indexer_state,
         "last_indexed": settings.get("last_indexed"),
         "last_duration_seconds": settings.get("last_duration_seconds"),
+        "last_attempted": settings.get("last_attempted"),
+        "last_error": settings.get("last_error"),
         "interval_hours": settings.get("interval_hours", 24),
         "index_archives": settings.get("index_archives", True),
         "auth_enabled": bool(_auth_enabled),
