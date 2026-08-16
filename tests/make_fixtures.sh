@@ -19,6 +19,8 @@ set -eu
 ROOT="${1:?usage: make_fixtures.sh <data-root>}"
 FIX="$ROOT/_nasearch_fixtures"
 
+mkdir -p "$ROOT"
+
 # Loose files at the top level — several tests pick an arbitrary file directly
 # under /data to work with, and skip when there isn't one.
 echo "top-level fixture file" > "$ROOT/nasearchfixture_root.txt"
