@@ -2058,7 +2058,7 @@ function renderResults(data, query) {
     return;
   }
 
-  const { results, truncated } = data;
+  const { results, truncated, total_matches } = data;
 
   if (!results.length) {
     allResults = [];
@@ -2077,7 +2077,14 @@ function renderResults(data, query) {
   displayResults = [...results];
   _lastQuery     = query;
 
-  if (truncated) truncWarn.style.display = 'block';
+  if (truncated) {
+    // total_matches is the real count from the index; it's null when the
+    // archive filter is on, since that runs after the count is taken.
+    truncWarn.textContent = total_matches
+      ? `⚠ showing ${results.length.toLocaleString()} of ${total_matches.toLocaleString()} matches — refine your query`
+      : '⚠ results capped at MAX_RESULTS limit — refine your query';
+    truncWarn.style.display = 'block';
+  }
 
   countEl.innerHTML = `<span>${results.length.toLocaleString()}</span> result${results.length !== 1 ? 's' : ''}`;
 

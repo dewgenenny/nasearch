@@ -621,6 +621,34 @@ async def logout(request: Request):
     return resp
 
 # ── API ───────────────────────────────────────────────────────────────────────
+async def _run_locate(
+    extra_args: list[str],
+    patterns: list[str],
+    timeout: float = 10,
+) -> tuple[Optional[str], Optional[JSONResponse]]:
+    """Run locate against the index, returning (stdout, error_response).
+
+    Async subprocess so the event loop isn't blocked while locate runs.
+    Exactly one of the two return slots is ever populated.
+    """
+    cmd = ["locate", "-d", DB_PATH, "-i", *extra_args, "--", *patterns]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return None, JSONResponse({"error": "Search timed out"}, status_code=504)
+    except FileNotFoundError:
+        return None, JSONResponse({"error": "'locate' not found in container"}, status_code=500)
+    return stdout.decode("utf-8", errors="replace"), None
+
+
 @app.get("/api/search")
 async def search(
     q: str = Query("", min_length=0),
@@ -629,7 +657,7 @@ async def search(
     no_archives: bool = Query(False),
 ):
     if not q and not ext:
-        return JSONResponse({"results": [], "total": 0, "truncated": False})
+        return JSONResponse({"results": [], "total": 0, "truncated": False, "total_matches": 0})
 
     if not Path(DB_PATH).exists():
         return JSONResponse(
@@ -652,33 +680,44 @@ async def search(
     # trusted to have kept them out.
     hide_archives = no_archives or not load_settings().get("index_archives", True)
 
-    # Cap locate's output at MAX_RESULTS to bound memory usage.
-    fetch_n = MAX_RESULTS
-    cmd = ["locate", "-d", DB_PATH, "-i", "-n", str(fetch_n), "--", *patterns]
+    # Fetch one row beyond the page so the extra row reveals that more matches
+    # exist. The archive filter runs after locate (plocate has no negative
+    # patterns), so when it is active take the full cap as headroom instead.
+    fetch_n = MAX_RESULTS + 1 if hide_archives else limit + 1
 
-    # Use async subprocess so we don't block the event loop while locate runs.
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return JSONResponse({"error": "Search timed out"}, status_code=504)
-    except FileNotFoundError:
-        return JSONResponse({"error": "'locate' not found in container"}, status_code=500)
+    # The listing and the true match count are two separate locate runs, so
+    # issue them together rather than paying for them back to back. The count
+    # is skipped when the archive filter is on, since locate would be counting
+    # rows we are about to throw away.
+    runs = [_run_locate(["-n", str(fetch_n)], patterns)]
+    if not hide_archives:
+        runs.append(_run_locate(["-c"], patterns, timeout=5))
+    gathered = await asyncio.gather(*runs)
 
-    lines = [l for l in stdout.decode("utf-8", errors="replace").splitlines() if l.strip()]
+    listing, err = gathered[0]
+    if err is not None:
+        return err
 
+    lines = [l for l in listing.splitlines() if l.strip()]
+    # A full fetch window means locate had more to give, whether or not the
+    # archive filter later thins the rows below the page size.
+    window_full = len(lines) >= fetch_n
     if hide_archives:
         lines = [l for l in lines if not _ARCHIVE_RE.search(l)]
 
-    truncated = len(lines) > limit
+    truncated = len(lines) > limit or window_full
     lines = lines[:limit]
+
+    total_matches = None
+    if len(gathered) > 1:
+        count_out, count_err = gathered[1]
+        if count_err is None:
+            try:
+                total_matches = int(count_out.strip().splitlines()[0])
+            except (ValueError, IndexError):
+                pass  # unparseable count is not worth failing the search over
+        if total_matches is not None and total_matches > len(lines):
+            truncated = True
 
     results = []
     for path in lines:
@@ -695,7 +734,12 @@ async def search(
             "is_dir": False,  # filled by /api/enrich
         })
 
-    return JSONResponse({"results": results, "total": len(results), "truncated": truncated})
+    return JSONResponse({
+        "results": results,
+        "total": len(results),
+        "truncated": truncated,
+        "total_matches": total_matches,
+    })
 
 
 @app.get("/api/status")

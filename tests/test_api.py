@@ -319,12 +319,19 @@ def test_search_no_archives_filters_archive_paths(client):
         )
 
 
-def test_search_without_no_archives_ignores_filter(client):
+def test_search_without_no_archives_ignores_filter(client, known_file):
     # Default behaviour (no_archives absent) returns a superset — the filtered
     # result set must be a subset of the unfiltered one.
-    full  = {i["path"] for i in client.get("/api/search", params={"q": "."}).json()["results"]}
-    filt  = {i["path"] for i in client.get("/api/search", params={"q": ".", "no_archives": "1"}).json()["results"]}
-    assert filt <= full
+    #
+    # Uses a narrow query on purpose. The two calls use different fetch windows
+    # — the filtered one takes extra headroom, since rows it discards would
+    # otherwise eat into the page — so at the result cap each can surface rows
+    # the other never fetched. The subset property is only meaningful below it.
+    params = {"q": known_file["name"]}
+    full = client.get("/api/search", params=params).json()
+    assert full["truncated"] is False, "pick a narrower query: this one hits the cap"
+    filt = client.get("/api/search", params={**params, "no_archives": "1"}).json()
+    assert {i["path"] for i in filt["results"]} <= {i["path"] for i in full["results"]}
 
 
 # ── File serving ──────────────────────────────────────────────────────────────
@@ -534,3 +541,25 @@ def test_search_ext_filter_survives_result_cap(client, fixtures):
         "nasearchbulk_zzz_rare_2.dat",
         "nasearchbulk_zzz_rare_3.dat",
     ]
+
+
+def test_search_reports_truncation_when_capped(client, fixtures):
+    """#7 — truncated was hardcoded false: locate's own -n cap meant the
+    'did we get more rows than the page' comparison could never be true."""
+    data = client.get("/api/search", params={"q": "nasearchbulk"}).json()
+    assert data["truncated"] is True
+    assert data["total_matches"] == 603
+    assert data["total"] < data["total_matches"]
+
+
+def test_search_truncation_independent_of_limit(client, fixtures):
+    data = client.get("/api/search", params={"q": "nasearchbulk", "limit": 10}).json()
+    assert len(data["results"]) == 10
+    assert data["truncated"] is True
+    assert data["total_matches"] == 603
+
+
+def test_search_not_truncated_when_complete(client, fixtures):
+    data = client.get("/api/search", params={"q": "nasearchfixture_outside_archive"}).json()
+    assert data["truncated"] is False
+    assert data["total_matches"] == data["total"] == 1
