@@ -23,6 +23,8 @@ FIX="$ROOT/_nasearch_fixtures"
 # under /data to work with, and skip when there isn't one.
 echo "top-level fixture file" > "$ROOT/nasearchfixture_root.txt"
 echo "<h1>fixture</h1>"       > "$ROOT/nasearchfixture_page.html"
+# Gives the extension-filter test something real to match on.
+echo "print('fixture')"       > "$ROOT/nasearchfixture_module.py"
 
 rm -rf "$FIX"
 mkdir -p "$FIX/oldstamp" "$FIX/archives" "$FIX/bulk"

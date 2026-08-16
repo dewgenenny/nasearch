@@ -25,10 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Regression tests for reported bugs need conditions git can't store
+      # (pre-1980 mtimes, directory names with spaces, >MAX_RESULTS matches).
+      # Without this the fixture tree is absent and those tests skip, so a
+      # green CI run would say nothing about the bugs they cover.
+      - name: Generate regression fixtures
+        run: sh tests/make_fixtures.sh "${{ runner.temp }}/nasearch-data"
+
       - name: Run tests
         run: docker compose -f docker-compose.dev.yml up --build --abort-on-container-exit --exit-code-from tests
         env:
-          DEV_DATA_PATH: ${{ github.workspace }}
+          DEV_DATA_PATH: ${{ runner.temp }}/nasearch-data
 
       - name: Tear down
         if: always()
