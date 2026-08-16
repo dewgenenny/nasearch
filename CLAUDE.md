@@ -86,6 +86,7 @@ Everything meaningful lives in two files:
 | Indexer | `run_index_sync()` wraps `updatedb` in a subprocess; called via `run_in_executor` so it doesn't block the event loop. Records `last_attempted` on every run and `last_error` on every outcome |
 | Scheduler | `scheduler_loop()` is an async task (started in the FastAPI lifespan) that re-indexes on the configured interval; sleeps in ≤10 min slices so settings changes land without a restart. `seconds_until_next_index()` enforces a retry floor of `min(1 h, interval)` from the last *attempt*, so a failing index can't re-crawl the array in a hot loop. The loop body catches everything except `CancelledError` — an uncaught exception here would kill the task and silently stop all future indexing |
 | Search | `GET /api/search` shells out to `locate -d <db> -i -- <pattern>`; extension filter applied post-locate when both `q` and `ext` are provided |
+| Archives | `index_archives=False` prunes archive-shaped directories at index time. `updatedb --prunenames` matches literal basenames only (globs are silently ignored), so `_find_archive_dirs()` walks the tree and passes real paths via `--prunepaths`. That list is one space-separated string, so paths containing whitespace can't be expressed — the search-time `_ARCHIVE_RE` filter is applied whenever the setting is off, which is what actually guarantees archive contents stay out of results |
 | File serving | `GET /api/file` validates path is within `DATA_PATH` via `safe_resolve()` (path traversal protection), then streams via `FileResponse` which supports HTTP Range requests (needed for video seeking). `dl=1` forces `Content-Disposition: attachment`. |
 | State | `indexer_state` dict is in-memory (not persisted); reflects current run/error/progress |
 
@@ -93,7 +94,7 @@ API endpoints:
 - `GET /api/search?q=&ext=&limit=` — search the index
 - `GET /api/status` — DB existence, size, indexer state, last-run info, interval setting, `last_attempted` / `last_error`
 - `POST /api/reindex` — fire-and-forget background re-index
-- `POST /api/settings` — update `interval_hours` (must be one of: 0, 1, 6, 12, 24, 48, 168)
+- `POST /api/settings` — update `interval_hours` (must be one of: 0, 1, 6, 12, 24, 48, 168) and `index_archives`
 - `GET /api/file?path=&dl=` — serve a file inline or as download
 
 Static files are served from `/app/static` and mounted last, so API routes take precedence.

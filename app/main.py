@@ -129,9 +129,16 @@ _ARCHIVE_RE = re.compile(
     r'\.(zip|7z|rar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz)/',
     re.IGNORECASE,
 )
-# Passed to updatedb --prunenames when index_archives=False.
-# Preserves the updatedb defaults (.git .bzr .hg .svn) while adding archive globs.
-_ARCHIVE_PRUNENAMES = ".git .bzr .hg .svn *.zip *.7z *.rar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz"
+# Same extensions, anchored at the end of a directory name — used to find the
+# archive directories that have to be handed to updatedb as explicit paths.
+_ARCHIVE_DIR_RE = re.compile(
+    r'\.(zip|7z|rar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz)$',
+    re.IGNORECASE,
+)
+# updatedb takes --prunepaths as one space-separated string, so the list has a
+# practical length ceiling. Beyond it we stop pruning and let the search-time
+# filter cover the rest.
+_PRUNEPATHS_MAX_CHARS = 100_000
 
 DEFAULT_SETTINGS = {
     "interval_hours": 24,   # 0 = manual only
@@ -151,6 +158,7 @@ indexer_state = {
     # settings.json so the retry floor still holds when settings can't be
     # written — which is exactly the situation where indexing keeps failing.
     "last_attempt_ts": None,
+    "archive_prune": None,
 }
 _scheduler_task: Optional[asyncio.Task] = None
 
@@ -181,6 +189,44 @@ def save_settings(s: dict):
 
 
 # ── Indexer ───────────────────────────────────────────────────────────────────
+def _find_archive_dirs(root: str, already_pruned: set[str]) -> tuple[list[str], int]:
+    """Enumerate directories whose name looks like a mounted archive.
+
+    updatedb's --prunenames matches literal basenames, not globs, so the
+    ``*.zip``-style patterns this used to pass were silently ignored and archive
+    contents were indexed regardless of the setting. --prunepaths does take real
+    paths, so they have to be found up front — one extra walk of the tree, which
+    is why this only runs when archive indexing is turned off.
+
+    Returns (prunable, unprunable_count). --prunepaths is a single
+    space-separated string, so paths containing whitespace cannot be expressed
+    and are counted rather than passed; the search-time filter covers those.
+    """
+    prunable: list[str] = []
+    unprunable = 0
+    budget = _PRUNEPATHS_MAX_CHARS
+
+    for dirpath, dirnames, _ in os.walk(root, topdown=True, followlinks=False):
+        keep = []
+        for name in dirnames:
+            full = os.path.join(dirpath, name)
+            if full in already_pruned:
+                continue  # configured prune path — don't descend
+            if not _ARCHIVE_DIR_RE.search(name):
+                keep.append(name)
+                continue
+            # Archive directory: prune it if we can express it, and never
+            # descend into it either way.
+            if any(c.isspace() for c in full) or len(full) + 1 > budget:
+                unprunable += 1
+            else:
+                prunable.append(full)
+                budget -= len(full) + 1
+        dirnames[:] = keep
+
+    return prunable, unprunable
+
+
 def _record_index_result(error: Optional[str], duration: Optional[float] = None) -> None:
     """Persist the outcome of an index run. Best-effort: bookkeeping must never
     mask the real failure, and the in-memory retry floor holds without it."""
@@ -216,14 +262,29 @@ def run_index_sync():
         print(f"[indexer] could not record attempt: {e!r}", file=sys.stderr)
 
     try:
+        prune_paths = PRUNE_PATHS.split()
+        if not settings.get("index_archives", True):
+            indexer_state["progress"] = "Locating archives to skip…"
+            archive_dirs, unprunable = _find_archive_dirs(DATA_PATH, set(prune_paths))
+            prune_paths += archive_dirs
+            indexer_state["archive_prune"] = {"pruned": len(archive_dirs), "unprunable": unprunable}
+            if unprunable:
+                print(
+                    f"[indexer] {unprunable} archive directories could not be excluded at "
+                    "index time (whitespace in path, or prune list too long); they are "
+                    "filtered out of search results instead",
+                    file=sys.stderr,
+                )
+        else:
+            indexer_state["archive_prune"] = None
+
+        indexer_state["progress"] = "Starting updatedb…"
         cmd = [
             "updatedb", "-l", "0",
             "-o", DB_PATH,
             "-U", DATA_PATH,
-            "--prunepaths", PRUNE_PATHS,
+            "--prunepaths", " ".join(prune_paths),
         ]
-        if not settings.get("index_archives", True):
-            cmd += ["--prunenames", _ARCHIVE_PRUNENAMES]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         duration = (datetime.now(timezone.utc) - started).total_seconds()
 
@@ -578,6 +639,11 @@ async def search(
 
     pattern = q if q else f"*.{ext.lstrip('.')}"
 
+    # Archive contents are excluded on request, and always when indexing them is
+    # turned off — see _find_archive_dirs() for why the index alone can't be
+    # trusted to have kept them out.
+    hide_archives = no_archives or not load_settings().get("index_archives", True)
+
     # Cap locate's output at MAX_RESULTS to bound memory usage.
     fetch_n = MAX_RESULTS
     cmd = ["locate", "-d", DB_PATH, "-i", "-n", str(fetch_n), "--", pattern]
@@ -604,7 +670,7 @@ async def search(
         ext_clean = ext.lstrip(".").lower()
         lines = [l for l in lines if l.lower().endswith(f".{ext_clean}")]
 
-    if no_archives:
+    if hide_archives:
         lines = [l for l in lines if not _ARCHIVE_RE.search(l)]
 
     truncated = len(lines) > limit

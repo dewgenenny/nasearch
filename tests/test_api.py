@@ -486,3 +486,38 @@ def test_zip_folder_with_pre_1980_mtime_is_valid(client, fixtures):
     # Clamped to the ZIP epoch floor, with contents intact
     assert zf.getinfo("ancient.txt").date_time == (1980, 1, 1, 0, 0, 0)
     assert zf.read("ancient.txt") == b"restored from tape\n"
+
+
+def test_no_archives_filter_hides_archive_contents(client, fixtures):
+    inside = client.get("/api/search", params={"q": "nasearchfixture_in"}).json()
+    hidden = client.get(
+        "/api/search", params={"q": "nasearchfixture_in", "no_archives": "1"}
+    ).json()
+    assert hidden["total"] == 0
+    # The unfiltered query must still see them, or this proves nothing
+    assert inside["total"] >= 1 or client.get("/api/status").json()["index_archives"] is False
+
+
+def test_index_archives_off_excludes_archive_contents(client, fixtures, reindex_now):
+    """#6 — updatedb --prunenames matches literal basenames, so the '*.zip'
+    patterns were silently ignored and the setting did nothing.
+
+    Leaves index_archives back on, and re-indexes, so later tests are unaffected.
+    """
+    try:
+        r = client.post("/api/settings", json={"index_archives": False})
+        assert r.status_code == 200
+        reindex_now()
+
+        data = client.get("/api/search", params={"q": "nasearchfixture_in"}).json()
+        assert data["total"] == 0, "archive contents still returned with indexing off"
+
+        prune = client.get("/api/status").json()["indexer"]["archive_prune"]
+        assert prune["pruned"] >= 1
+        # 'my bundle.zip' has a space, and --prunepaths is a space-separated
+        # list, so it can't be excluded at index time — the search-time filter
+        # is what keeps it out of results.
+        assert prune["unprunable"] >= 1
+    finally:
+        client.post("/api/settings", json={"index_archives": True})
+        reindex_now()

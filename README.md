@@ -178,6 +178,15 @@ environment:
 
 Useful for high-churn directories (Docker appdata, VM images) that would otherwise bloat the index.
 
+Note that `PRUNE_PATHS` is passed to `updatedb` as a single space-separated string, so **a path containing a space cannot be excluded this way** — that's a limitation of `updatedb`, not of NASearch.
+
+### Excluding archive contents
+
+If archives are mounted as directories on your array, their contents show up in results — searching for a common word can bury you in hits from inside hundreds of ZIPs. Two controls:
+
+- **`arch` toggle (search bar)** — hides results whose path runs through an archive (`…/backup.zip/file.txt`). Instant, no re-index needed.
+- **Archive indexing (settings)** — turn it off to keep archive contents out of the index entirely. The next re-index is slower, because the archive directories have to be located before `updatedb` runs, and a smaller index means faster searches afterwards. Archive contents are hidden from results while this is off regardless, so paths that can't be excluded at index time (again, those containing spaces) still never appear.
+
 ### Homepage dashboard integration
 
 NASearch exposes a JSON widget endpoint compatible with [Homepage](https://gethomepage.dev). Uncomment and fill in the labels section of your compose file:
