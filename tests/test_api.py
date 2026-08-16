@@ -521,3 +521,16 @@ def test_index_archives_off_excludes_archive_contents(client, fixtures, reindex_
     finally:
         client.post("/api/settings", json={"index_archives": True})
         reindex_now()
+
+
+def test_search_ext_filter_survives_result_cap(client, fixtures):
+    """#8 — the extension filter ran after locate's cap, so a broad query
+    could burn the whole fetch window on the wrong extension. The fixture has
+    600 .log files sorting ahead of 3 .dat files, well past the 500 cap."""
+    data = client.get("/api/search", params={"q": "nasearchbulk", "ext": "dat"}).json()
+    names = sorted(r["name"] for r in data["results"])
+    assert names == [
+        "nasearchbulk_zzz_rare_1.dat",
+        "nasearchbulk_zzz_rare_2.dat",
+        "nasearchbulk_zzz_rare_3.dat",
+    ]

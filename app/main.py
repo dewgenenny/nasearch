@@ -637,7 +637,15 @@ async def search(
             status_code=503,
         )
 
-    pattern = q if q else f"*.{ext.lstrip('.')}"
+    # locate ANDs multiple patterns together, so folding the extension in here
+    # filters inside the index instead of after the fetch cap. Post-filtering
+    # starved broad queries: the cap could be used up entirely by files of the
+    # wrong extension before the filter ever ran.
+    patterns = []
+    if q:
+        patterns.append(q)
+    if ext:
+        patterns.append(f"*.{ext.lstrip('.')}")
 
     # Archive contents are excluded on request, and always when indexing them is
     # turned off — see _find_archive_dirs() for why the index alone can't be
@@ -646,7 +654,7 @@ async def search(
 
     # Cap locate's output at MAX_RESULTS to bound memory usage.
     fetch_n = MAX_RESULTS
-    cmd = ["locate", "-d", DB_PATH, "-i", "-n", str(fetch_n), "--", pattern]
+    cmd = ["locate", "-d", DB_PATH, "-i", "-n", str(fetch_n), "--", *patterns]
 
     # Use async subprocess so we don't block the event loop while locate runs.
     try:
@@ -665,10 +673,6 @@ async def search(
         return JSONResponse({"error": "'locate' not found in container"}, status_code=500)
 
     lines = [l for l in stdout.decode("utf-8", errors="replace").splitlines() if l.strip()]
-
-    if ext and q:
-        ext_clean = ext.lstrip(".").lower()
-        lines = [l for l in lines if l.lower().endswith(f".{ext_clean}")]
 
     if hide_archives:
         lines = [l for l in lines if not _ARCHIVE_RE.search(l)]
