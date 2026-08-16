@@ -45,6 +45,37 @@ def idle_client(client):
     return client
 
 
+FIXTURE_ROOT = "/data/_nasearch_fixtures"
+
+
+@pytest.fixture
+def reindex_now(client):
+    """Trigger a re-index and block until it has finished."""
+    def _run():
+        assert client.post("/api/reindex").status_code in (200, 409)
+        wait_for_index(client)
+    return _run
+
+
+@pytest.fixture(scope="session")
+def fixtures(client):
+    """Gate for tests that need the generated fixture tree.
+
+    Some conditions can't be committed to git — pre-1980 mtimes, directory names
+    with spaces, more files than MAX_RESULTS — so tests/make_fixtures.sh builds
+    them on the host and the data root is mounted from there. Without that
+    tree these tests skip rather than fail, so the suite still runs against an
+    ordinary data root.
+    """
+    r = client.get("/api/browse", params={"path": FIXTURE_ROOT})
+    if r.status_code != 200:
+        pytest.skip(
+            f"{FIXTURE_ROOT} not present — run tests/make_fixtures.sh <root> and "
+            "point DEV_DATA_PATH at it to enable the regression tests"
+        )
+    return FIXTURE_ROOT
+
+
 @pytest.fixture(scope="session")
 def client():
     wait_for_server(BASE_URL)

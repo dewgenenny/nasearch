@@ -28,6 +28,17 @@ docker compose -f docker-compose.dev.yml up --build --abort-on-container-exit --
 
 This builds the app image, starts the app container, then runs pytest inside a fresh Python 3.12 container against it. Exit code reflects the test result.
 
+### Regression fixtures
+
+The regression tests for reported bugs need conditions git can't carry — pre-1980 mtimes, directory names containing spaces, more files than `MAX_RESULTS`. Generate them into a **throwaway** directory (the script writes at the top level of the root it's given) and point the data mount at it:
+
+```bash
+sh tests/make_fixtures.sh /tmp/nasearch-data
+DEV_DATA_PATH=/tmp/nasearch-data docker compose -f docker-compose.dev.yml up --build --abort-on-container-exit --exit-code-from tests
+```
+
+Without the fixtures those tests skip rather than fail, so the suite still runs against an ordinary data root — but a run that skips them isn't proof the bugs stayed fixed.
+
 ### App only (for manual testing in the browser)
 
 ```bash

@@ -179,11 +179,21 @@ def test_browse_non_directory_returns_400(client):
 
 @pytest.fixture(scope="module")
 def sample_zip_path(client):
-    """A .zip file under /data, found via search, or skipped if none exists."""
-    results = client.get("/api/search", params={"q": ".zip", "ext": "zip", "limit": 1}).json()["results"]
-    if not results:
+    """A real .zip file under /data, found via search, or skipped if none exists.
+
+    Directories can be named *.zip too (that's exactly what the archive filter
+    exists for), and search results don't carry is_dir — it's filled in later by
+    /api/enrich — so ask enrich which of the candidates is actually a file.
+    """
+    results = client.get("/api/search", params={"q": ".zip", "ext": "zip", "limit": 20}).json()["results"]
+    paths = [r["path"] for r in results]
+    if not paths:
         pytest.skip("No .zip files found in index")
-    return results[0]["path"]
+    meta = client.post("/api/enrich", json={"paths": paths}).json()
+    real = next((p for p in paths if meta.get(p, {}).get("is_dir") is False), None)
+    if real is None:
+        pytest.skip("No .zip regular files found in index (only archive-shaped directories)")
+    return real
 
 
 def test_ziplist_response_shape(client, sample_zip_path):
