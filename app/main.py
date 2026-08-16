@@ -807,6 +807,30 @@ class _NonSeekableBuf:
         return out
 
 
+_ZIP_MIN_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+_ZIP_MAX_DATE_TIME = (2107, 12, 31, 23, 59, 58)
+
+
+def _zip_date_time(mtime: float) -> tuple:
+    """Clamp an mtime into the range ZIP's DOS timestamp field can represent.
+
+    ZipInfo raises ValueError for years before 1980, and years after 2107
+    overflow the field. Epoch-0 mtimes are common on data restored from tape or
+    copied by tools that drop metadata, and the raise happened mid-stream —
+    after StreamingResponse had already committed to a 200 — so the client got
+    a full-looking download with a truncated central directory.
+    """
+    try:
+        dt = datetime.fromtimestamp(mtime)
+    except (OSError, OverflowError, ValueError):
+        return _ZIP_MIN_DATE_TIME
+    if dt.year < 1980:
+        return _ZIP_MIN_DATE_TIME
+    if dt.year > 2107:
+        return _ZIP_MAX_DATE_TIME
+    return (dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+
+
 def _scan_folder(folder: Path) -> dict:
     """Count files and bytes under folder. Returns early once limits are hit."""
     file_count = 0
@@ -869,10 +893,9 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
             arcname = fpath.relative_to(folder).as_posix()
             try:
                 st = os.stat(fpath_norm)
-                dt = datetime.fromtimestamp(st.st_mtime)
                 info = zipfile.ZipInfo(
                     filename=arcname,
-                    date_time=(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second),
+                    date_time=_zip_date_time(st.st_mtime),
                 )
                 info.compress_type = zipfile.ZIP_STORED
                 with zf.open(info, "w") as zentry, open(fpath_norm, "rb") as src:
@@ -884,8 +907,12 @@ def _stream_zip(folder: Path) -> Iterator[bytes]:
                         chunk = buf.drain()
                         if chunk:
                             yield chunk
-            except (OSError, PermissionError):
-                continue  # skip files that disappear or are unreadable
+            except (OSError, ValueError):
+                # Skip files that disappear, are unreadable, or carry metadata
+                # ZIP can't express. Never let one file abort the whole stream:
+                # the response is already committed, so raising here would hand
+                # the client a corrupt archive with no error.
+                continue
 
             # Drain data descriptor written when zentry closes
             chunk = buf.drain()

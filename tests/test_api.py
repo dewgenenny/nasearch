@@ -470,3 +470,19 @@ def test_status_exposes_index_attempt_and_error(client):
     assert "last_attempted" in data
     assert "last_error" in data
     assert data["last_attempted"] is not None
+
+
+def test_zip_folder_with_pre_1980_mtime_is_valid(client, fixtures):
+    """#5 — ZipInfo raises on pre-1980 timestamps. Mid-stream that truncated an
+    already-committed 200 response into an archive no tool could open."""
+    import io
+    import zipfile
+
+    r = client.get("/api/zip", params={"path": f"{fixtures}/oldstamp"})
+    assert r.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert zf.testzip() is None
+    assert sorted(zf.namelist()) == ["ancient.txt", "normal.txt"]
+    # Clamped to the ZIP epoch floor, with contents intact
+    assert zf.getinfo("ancient.txt").date_time == (1980, 1, 1, 0, 0, 0)
+    assert zf.read("ancient.txt") == b"restored from tape\n"
